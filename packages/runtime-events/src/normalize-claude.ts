@@ -145,14 +145,19 @@ export function normalizeClaudeMessage(
       ];
     }
 
+    // SDK internal events — safe to ignore or log at debug level
+    case 'user':
+    case 'rate_limit_event':
+      return []; // No user-facing event needed
+
     default:
       return [
         {
           ...base,
           id: randomUUID(),
           kind: 'system.log',
-          title: `Unknown message type: ${type}`,
-          text: JSON.stringify(message),
+          title: `SDK: ${type}`,
+          text: JSON.stringify(message).slice(0, 200),
           level: 'debug',
         },
       ];

@@ -18,6 +18,7 @@
     "@fastify/cors": "^11.0.0",
     "@fastify/websocket": "^11.0.0",
     "@prisma/client": "^6.9.0",
+    "dotenv": "^17.3.1",
     "fastify": "^5.3.0"
   },
   "devDependencies": {
