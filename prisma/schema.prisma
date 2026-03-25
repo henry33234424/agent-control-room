@@ -1,0 +1,213 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Room {
+  id            String   @id @default(cuid())
+  name          String
+  repoPath      String   @map("repo_path")
+  defaultBranch String   @default("main") @map("default_branch")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  sessions         AgentSession[]
+  chatMessages     ChatMessage[]
+  runs             Run[]
+  handoffBundles   HandoffBundle[]
+  pinnedBriefItems PinnedBriefItem[]
+  worktrees        Worktree[]
+
+  @@map("rooms")
+}
+
+model AgentSession {
+  id              String   @id @default(cuid())
+  roomId          String   @map("room_id")
+  agent           String   // 'claude' | 'codex'
+  vendorSessionId String?  @map("vendor_session_id")
+  name            String
+  mode            String   @default("readWrite") // readOnly | readWrite
+  status          String   @default("idle") // idle/running/waitingApproval/failed/archived
+  worktreeId      String?  @map("worktree_id")
+  metadataJson    String?  @map("metadata_json")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  room         Room          @relation(fields: [roomId], references: [id])
+  worktree     Worktree?     @relation(fields: [worktreeId], references: [id])
+  runs         Run[]
+  chatMessages ChatMessage[]
+
+  @@map("agent_sessions")
+}
+
+model Run {
+  id             String    @id @default(cuid())
+  roomId         String    @map("room_id")
+  agentSessionId String    @map("agent_session_id")
+  triggerType    String    @default("user") @map("trigger_type") // user/handoff/automation/review
+  parentRunId    String?   @map("parent_run_id")
+  status         String    @default("queued")
+  promptSnapshot String?   @map("prompt_snapshot")
+  resultSummary  String?   @map("result_summary")
+  totalCostUsd   Float?    @map("total_cost_usd")
+  startedAt      DateTime? @map("started_at")
+  endedAt        DateTime? @map("ended_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  room          Room           @relation(fields: [roomId], references: [id])
+  agentSession  AgentSession   @relation(fields: [agentSessionId], references: [id])
+  parentRun     Run?           @relation("RunToRun", fields: [parentRunId], references: [id])
+  childRuns     Run[]          @relation("RunToRun")
+  runtimeEvents RuntimeEvent[]
+  approvals     Approval[]
+
+  @@map("runs")
+}
+
+model Worktree {
+  id         String   @id @default(cuid())
+  roomId     String   @map("room_id")
+  agent      String
+  sessionKey String   @map("session_key")
+  path       String
+  branch     String
+  mode       String   @default("readWrite")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  room     Room           @relation(fields: [roomId], references: [id])
+  sessions AgentSession[]
+
+  @@unique([roomId, path])
+  @@map("worktrees")
+}
+
+model ChatMessage {
+  id               String   @id @default(cuid())
+  roomId           String   @map("room_id")
+  sessionId        String?  @map("session_id")
+  agent            String?
+  role             String   // user/agent/system/review/approval/handoff-summary
+  mentionTarget    String?  @map("mention_target")
+  replyToMessageId String?  @map("reply_to_message_id")
+  content          String
+  contentFormat    String   @default("markdown") @map("content_format")
+  selectable       Boolean  @default(true)
+  pinned           Boolean  @default(false)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  room         Room                       @relation(fields: [roomId], references: [id])
+  agentSession AgentSession?              @relation(fields: [sessionId], references: [id])
+  handoffLinks HandoffBundleMessageLink[]
+
+  @@map("chat_messages")
+}
+
+model RuntimeEvent {
+  id         String   @id @default(cuid())
+  roomId     String   @map("room_id")
+  agent      String
+  sessionId  String   @map("session_id")
+  runId      String   @map("run_id")
+  worktreeId String?  @map("worktree_id")
+  kind       String
+  title      String?
+  text       String?
+  payloadJson String? @map("payload_json")
+  level      String   @default("info")
+  ts         DateTime @default(now())
+
+  run Run @relation(fields: [runId], references: [id])
+
+  @@index([runId])
+  @@index([sessionId])
+  @@index([roomId, ts])
+  @@map("runtime_events")
+}
+
+model HandoffBundle {
+  id                    String   @id @default(cuid())
+  roomId                String   @map("room_id")
+  sourceAgent           String?  @map("source_agent")
+  targetAgent           String   @map("target_agent")
+  rawExcerpt            String   @map("raw_excerpt")
+  structuredSummaryJson String   @map("structured_summary_json")
+  pinnedBriefSnapshot   String   @map("pinned_brief_snapshot")
+  repoSnapshotJson      String   @map("repo_snapshot_json")
+  userInstruction       String   @map("user_instruction")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  room         Room                       @relation(fields: [roomId], references: [id])
+  messageLinks HandoffBundleMessageLink[]
+
+  @@map("handoff_bundles")
+}
+
+model HandoffBundleMessageLink {
+  id        String @id @default(cuid())
+  bundleId  String @map("bundle_id")
+  messageId String @map("message_id")
+  sortOrder Int    @map("sort_order")
+
+  bundle  HandoffBundle @relation(fields: [bundleId], references: [id])
+  message ChatMessage   @relation(fields: [messageId], references: [id])
+
+  @@unique([bundleId, messageId])
+  @@map("handoff_bundle_message_links")
+}
+
+model PinnedBriefItem {
+  id        String   @id @default(cuid())
+  roomId    String   @map("room_id")
+  section   String   // goal/constraints/decisions/openQuestions/doNotTouch
+  content   String
+  sortOrder Int      @default(0) @map("sort_order")
+  version   Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  room Room @relation(fields: [roomId], references: [id])
+
+  @@map("pinned_brief_items")
+}
+
+model Approval {
+  id           String    @id @default(cuid())
+  roomId       String    @map("room_id")
+  runId        String    @map("run_id")
+  agent        String
+  approvalType String    @map("approval_type")
+  title        String
+  payloadJson  String?   @map("payload_json")
+  status       String    @default("pending") // pending/approved/denied/cancelled
+  createdAt    DateTime  @default(now()) @map("created_at")
+  resolvedAt   DateTime? @map("resolved_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  run Run @relation(fields: [runId], references: [id])
+
+  @@map("approvals")
+}
+
+model Artifact {
+  id           String   @id @default(cuid())
+  roomId       String   @map("room_id")
+  runId        String   @map("run_id")
+  sessionId    String   @map("session_id")
+  kind         String   // file/diff/test-result/log
+  path         String?
+  content      String?
+  metadataJson String?  @map("metadata_json")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([runId])
+  @@map("artifacts")
+}

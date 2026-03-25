@@ -1,0 +1,30 @@
+{
+  "name": "control-room",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "db:migrate": "pnpm --filter @control-room/server prisma:migrate",
+    "db:generate": "pnpm --filter @control-room/server prisma:generate"
+  },
+  "devDependencies": {
+    "@prisma/client": "6.19.2",
+    "prettier": "^3.4.0",
+    "prisma": "6.19.2",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=10"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma",
+      "esbuild",
+      "sharp"
+    ]
+  }
+}
