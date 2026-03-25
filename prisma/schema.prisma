@@ -20,6 +20,7 @@ model Room {
   runs             Run[]
   handoffBundles   HandoffBundle[]
   pinnedBriefItems PinnedBriefItem[]
+  pinnedBriefHistory PinnedBriefHistory[]
   worktrees        Worktree[]
 
   @@map("rooms")
@@ -174,22 +175,26 @@ model PinnedBriefItem {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  room    Room                 @relation(fields: [roomId], references: [id])
-  history PinnedBriefHistory[]
+  room Room @relation(fields: [roomId], references: [id])
 
   @@map("pinned_brief_items")
 }
 
 model PinnedBriefHistory {
-  id        String   @id @default(cuid())
-  itemId    String   @map("item_id")
-  content   String
-  version   Int
-  changedAt DateTime @default(now()) @map("changed_at")
+  id         String   @id @default(cuid())
+  roomId     String   @map("room_id")
+  itemId     String   @map("item_id")
+  section    String
+  content    String
+  sortOrder  Int      @map("sort_order")
+  version    Int
+  changeType String   @map("change_type") // created/updated/reordered/deleted
+  changedAt  DateTime @default(now()) @map("changed_at")
 
-  item PinnedBriefItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
 
   @@index([itemId])
+  @@index([roomId, changedAt])
   @@map("pinned_brief_history")
 }
 
