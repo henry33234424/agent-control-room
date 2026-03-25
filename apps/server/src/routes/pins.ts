@@ -47,6 +47,16 @@ export async function pinRoutes(app: FastifyInstance) {
       const { roomId, pinId } = req.params;
       const { content, sortOrder } = req.body;
 
+      // Save current version to history before updating
+      const current = await prisma.pinnedBriefItem.findUniqueOrThrow({ where: { id: pinId } });
+      await prisma.pinnedBriefHistory.create({
+        data: {
+          itemId: pinId,
+          content: current.content,
+          version: current.version,
+        },
+      });
+
       const item = await prisma.pinnedBriefItem.update({
         where: { id: pinId },
         data: {

@@ -174,9 +174,23 @@ model PinnedBriefItem {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  room Room @relation(fields: [roomId], references: [id])
+  room    Room                 @relation(fields: [roomId], references: [id])
+  history PinnedBriefHistory[]
 
   @@map("pinned_brief_items")
+}
+
+model PinnedBriefHistory {
+  id        String   @id @default(cuid())
+  itemId    String   @map("item_id")
+  content   String
+  version   Int
+  changedAt DateTime @default(now()) @map("changed_at")
+
+  item PinnedBriefItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([itemId])
+  @@map("pinned_brief_history")
 }
 
 model Approval {
