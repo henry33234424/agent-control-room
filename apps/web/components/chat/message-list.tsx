@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import type { RuntimeEvent } from '@control-room/shared-types';
 import { useRoomStore } from '@/stores/room-store';
+import { useConsoleStore } from '@/stores/console-store';
 import { useSelectionStore } from '@/stores/selection-store';
 
 const ROLE_STYLES: Record<string, string> = {
@@ -20,15 +22,17 @@ const AGENT_LABELS: Record<string, string> = {
 
 export function MessageList() {
   const messages = useRoomStore((s) => s.messages);
+  const consoleEvents = useConsoleStore((s) => s.events);
   const selectedIds = useSelectionStore((s) => s.selectedMessageIds);
   const toggle = useSelectionStore((s) => s.toggle);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const streamingPreview = getStreamingPreview(consoleEvents);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages.length]);
+  }, [messages.length, streamingPreview]);
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2">
@@ -69,6 +73,34 @@ export function MessageList() {
           </div>
         ))
       )}
+      {streamingPreview && (
+        <div className="rounded-lg border border-emerald-800 bg-emerald-950/30 p-3 text-sm">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs font-semibold text-emerald-300 uppercase">
+              {streamingPreview.agent === 'claude' ? 'Claude' : 'Codex'}
+            </span>
+            <span className="text-xs text-emerald-500">streaming…</span>
+          </div>
+          <div className="text-emerald-100 whitespace-pre-wrap break-words">{streamingPreview.text}</div>
+        </div>
+      )}
     </div>
   );
+}
+
+function getStreamingPreview(
+  events: RuntimeEvent[],
+): { agent: RuntimeEvent['agent']; text: string } | null {
+  const hasTerminalEvent = events.some(
+    (event) => event.kind === 'run.completed' || event.kind === 'run.failed',
+  );
+  if (hasTerminalEvent) return null;
+
+  const deltaEvents = events.filter((event) => event.kind === 'message.delta');
+  if (deltaEvents.length === 0) return null;
+
+  return {
+    agent: deltaEvents[deltaEvents.length - 1].agent,
+    text: deltaEvents.map((event) => event.text ?? '').join(''),
+  };
 }

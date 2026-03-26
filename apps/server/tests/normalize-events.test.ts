@@ -112,6 +112,23 @@ describe('normalizeCodexNotification', () => {
     expect(kinds).toContain('tool.completed');
   });
 
+  it('silences codex agentMessage noise items', () => {
+    expect(
+      normalizeCodexNotification(
+        'item/started',
+        { item: { type: 'agentMessage', text: 'partial' }, threadId: 't1' },
+        ctx,
+      ),
+    ).toHaveLength(0);
+    expect(
+      normalizeCodexNotification(
+        'item/completed',
+        { item: { type: 'agentMessage', text: 'partial' }, threadId: 't1' },
+        ctx,
+      ),
+    ).toHaveLength(0);
+  });
+
   it('maps turn/completed using lastAgentMessage content', () => {
     const events = normalizeCodexNotification(
       'turn/completed',

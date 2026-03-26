@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useConsoleStore, filterEvents, type EventFilter } from '@/stores/console-store';
 import { useRoomStore } from '@/stores/room-store';
 import { useUIStore } from '@/stores/ui-store';
+import type { RuntimeEvent } from '@control-room/shared-types';
 import { ApprovalCard } from './approval-card';
 import { ReviewControls } from './review-controls';
 import { RunSelector } from './run-selector';
@@ -44,7 +45,7 @@ export function RuntimeConsole() {
   const currentRunId = useConsoleStore((s) => s.currentRunId);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const filtered = filterEvents(events, activeFilter);
+  const filtered = compactEvents(filterEvents(events, activeFilter), activeFilter);
 
   // Only show approvals for the currently selected session
   const pendingApprovals = allPendingApprovals.filter((approval) => {
@@ -57,7 +58,7 @@ export function RuntimeConsole() {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [filtered.length]);
+  }, [events.length, activeFilter, pendingApprovals.length]);
 
   return (
     <div className="flex flex-col h-full bg-gray-950">
@@ -89,7 +90,14 @@ export function RuntimeConsole() {
           </div>
         ) : (
           filtered.map((event) => (
-            <div key={event.id} className={`leading-relaxed ${KIND_STYLES[event.kind] ?? 'text-gray-400'}`}>
+            <div
+              key={event.id}
+              className={`leading-relaxed whitespace-pre-wrap break-words ${
+                event.kind === 'message.delta'
+                  ? 'rounded-md bg-green-950/30 px-2 py-1'
+                  : ''
+              } ${KIND_STYLES[event.kind] ?? 'text-gray-400'}`}
+            >
               {activeFilter === 'raw' ? (
                 <pre className="whitespace-pre-wrap text-gray-400">{JSON.stringify(event, null, 2)}</pre>
               ) : (
@@ -112,4 +120,24 @@ export function RuntimeConsole() {
       </div>
     </div>
   );
+}
+
+function compactEvents(events: RuntimeEvent[], filter: EventFilter): RuntimeEvent[] {
+  if (filter === 'raw') return events;
+
+  const compacted: RuntimeEvent[] = [];
+
+  for (const event of events) {
+    const last = compacted[compacted.length - 1];
+
+    if (event.kind === 'message.delta' && last?.kind === 'message.delta') {
+      last.text = `${last.text ?? ''}${event.text ?? ''}`;
+      last.ts = event.ts;
+      continue;
+    }
+
+    compacted.push({ ...event });
+  }
+
+  return compacted;
 }

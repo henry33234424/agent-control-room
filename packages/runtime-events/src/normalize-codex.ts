@@ -30,7 +30,7 @@ export function normalizeCodexNotification(
       const item = getRecord(params.item) ?? params;
       const itemType = (item.type as string) ?? 'task';
 
-      if (itemType === 'userMessage') return [];
+      if (isNoiseItemType(itemType)) return [];
 
       // Detect command execution
       if (itemType === 'command' || itemType === 'shell') {
@@ -63,7 +63,7 @@ export function normalizeCodexNotification(
       const item = getRecord(params.item) ?? params;
       const itemType = (item.type as string) ?? 'task';
 
-      if (itemType === 'userMessage') return [];
+      if (isNoiseItemType(itemType)) return [];
 
       const events: RuntimeEvent[] = [];
 
@@ -216,6 +216,10 @@ export function normalizeCodexNotification(
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + '…' : s;
+}
+
+function isNoiseItemType(itemType: string): boolean {
+  return itemType === 'userMessage' || itemType === 'agentMessage' || itemType === 'reasoning';
 }
 
 function getRecord(value: unknown): Record<string, unknown> | undefined {
