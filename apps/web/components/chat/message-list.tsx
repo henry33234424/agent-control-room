@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import Markdown from 'react-markdown';
 import type { RuntimeEvent } from '@control-room/shared-types';
 import { useRoomStore } from '@/stores/room-store';
 import { useConsoleStore } from '@/stores/console-store';
@@ -68,7 +69,9 @@ export function MessageList() {
                   {new Date(msg.createdAt).toLocaleTimeString('en-US', { hour12: false })}
                 </span>
               </div>
-              <div className="text-gray-200 whitespace-pre-wrap">{msg.content}</div>
+              <div className="text-gray-200 prose prose-invert prose-sm max-w-none break-words">
+                <Markdown>{msg.content}</Markdown>
+              </div>
             </div>
           </div>
         ))
@@ -81,7 +84,9 @@ export function MessageList() {
             </span>
             <span className="text-xs text-emerald-500">streaming…</span>
           </div>
-          <div className="text-emerald-100 whitespace-pre-wrap break-words">{streamingPreview.text}</div>
+          <div className="text-emerald-100 prose prose-invert prose-sm max-w-none break-words">
+            <Markdown>{streamingPreview.text}</Markdown>
+          </div>
         </div>
       )}
     </div>

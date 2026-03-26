@@ -6,6 +6,7 @@ import { messageService } from '../../services/message-service.js';
 import { sessionService } from '../../services/session-service.js';
 import { runManager } from '../../orchestrator/run-manager.js';
 import { randomUUID } from 'node:crypto';
+import { config } from '../../config.js';
 
 export class CodexCLIAdapter implements AgentDriver {
   agent = 'codex' as const;
@@ -32,8 +33,13 @@ export class CodexCLIAdapter implements AgentDriver {
       '--json',
       '--full-auto',
       '-C', workingDirectory,
-      prompt,
     ];
+
+    if (config.codexModel) {
+      args.push('-m', config.codexModel);
+    }
+
+    args.push(prompt);
 
     await this.runCLI(args, ctx, input);
   }
@@ -68,7 +74,7 @@ export class CodexCLIAdapter implements AgentDriver {
   private async runCLI(
     args: string[],
     ctx: CodexCLIContext,
-    input: { roomId: string; sessionId: string; runId: string },
+    input: { roomId: string; sessionId: string; runId: string; workingDirectory: string },
   ): Promise<void> {
     const { roomId, sessionId, runId } = input;
 
@@ -81,7 +87,7 @@ export class CodexCLIAdapter implements AgentDriver {
       runner.spawn({
         command: 'codex',
         args,
-        cwd: ctx.worktreeId ? args[args.indexOf('-C') + 1] : process.cwd(),
+        cwd: input.workingDirectory || process.cwd(),
         onStdoutLine: async (line) => {
           const parsed = parseCodexJsonlLine(line, ctx);
 
@@ -89,8 +95,9 @@ export class CodexCLIAdapter implements AgentDriver {
             await eventService.emitAndBroadcast(event);
           }
 
+          // Accumulate result text (don't overwrite)
           if (parsed.resultText) {
-            resultText = parsed.resultText;
+            resultText += (resultText ? '\n' : '') + parsed.resultText;
           }
           // Check if we got a run.completed event
           if (parsed.events.some((e) => e.kind === 'run.completed')) {
@@ -115,7 +122,7 @@ export class CodexCLIAdapter implements AgentDriver {
 
         onExit: async (code) => {
           try {
-            if (code === 0 || hasCompleted) {
+            if (code === 0 || (code === null && hasCompleted)) {
               await runManager.transitionRun(runId, 'summarizing');
               await runManager.setResult(runId, resultText);
               await runManager.transitionRun(runId, 'completed');

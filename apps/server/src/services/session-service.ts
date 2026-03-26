@@ -117,6 +117,7 @@ export class SessionService {
     const created = await prisma.agentSession.create({
       data: { roomId, agent, name, mode: 'readWrite' },
     });
+    await this.broadcastSessionUpdated(created.id);
     return toSessionDto(created);
   }
 

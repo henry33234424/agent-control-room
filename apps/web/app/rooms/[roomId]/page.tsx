@@ -8,8 +8,9 @@ import { useUIStore } from '@/stores/ui-store';
 import { useConsoleStore } from '@/stores/console-store';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { SessionTree } from '@/components/sidebar/session-tree';
-import { RuntimeConsole } from '@/components/console/runtime-console';
+import { CenterPanel } from '@/components/console/center-panel';
 import { ChatPanel } from '@/components/chat/chat-panel';
+import { ResizablePanels } from '@/components/layout/resizable-panels';
 
 export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -76,21 +77,17 @@ export default function RoomPage() {
   }
 
   return (
-    <div className="flex h-screen">
-      {/* [a] Left sidebar — Session Tree */}
-      <aside className="w-60 border-r border-gray-800 bg-gray-900 flex-shrink-0">
-        <SessionTree />
-      </aside>
-
-      {/* [b] Middle — Runtime Console */}
-      <main className="flex-1 min-w-0">
-        <RuntimeConsole />
-      </main>
-
-      {/* [c] Right — Chat Panel */}
-      <aside className="w-96 border-l border-gray-800 flex-shrink-0">
-        <ChatPanel />
-      </aside>
-    </div>
+    <ResizablePanels
+      left={
+        <div className="h-full bg-gray-900">
+          <SessionTree />
+        </div>
+      }
+      center={<CenterPanel />}
+      right={<ChatPanel />}
+      defaultLeftWidth={240}
+      defaultRightWidth={420}
+      minWidth={160}
+    />
   );
 }

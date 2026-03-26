@@ -25,7 +25,8 @@
       "@prisma/engines",
       "prisma",
       "esbuild",
-      "sharp"
+      "sharp",
+      "node-pty"
     ]
   }
 }

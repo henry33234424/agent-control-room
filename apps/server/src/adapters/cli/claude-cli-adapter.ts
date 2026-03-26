@@ -6,6 +6,7 @@ import { messageService } from '../../services/message-service.js';
 import { sessionService } from '../../services/session-service.js';
 import { runManager } from '../../orchestrator/run-manager.js';
 import { randomUUID } from 'node:crypto';
+import { config } from '../../config.js';
 
 export class ClaudeCLIAdapter implements AgentDriver {
   agent = 'claude' as const;
@@ -35,6 +36,10 @@ export class ClaudeCLIAdapter implements AgentDriver {
       '--permission-mode', 'bypassPermissions',
       '--append-system-prompt', 'You are working inside Control Room. Your output should be clear and structured for both the user and another agent that may take over.',
     ];
+
+    if (config.claudeModel) {
+      args.push('--model', config.claudeModel);
+    }
 
     // Resume existing session if available
     if (vendorSessionId) {

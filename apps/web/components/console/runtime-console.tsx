@@ -101,13 +101,7 @@ export function RuntimeConsole() {
               {activeFilter === 'raw' ? (
                 <pre className="whitespace-pre-wrap text-gray-400">{JSON.stringify(event, null, 2)}</pre>
               ) : (
-                <>
-                  <span className="text-gray-600 mr-2">
-                    {new Date(event.ts).toLocaleTimeString('en-US', { hour12: false })}
-                  </span>
-                  {event.title && <span className="mr-2">{event.title}</span>}
-                  {event.text && <span>{event.text}</span>}
-                </>
+                <EventLine event={event} />
               )}
             </div>
           ))
@@ -140,4 +134,114 @@ function compactEvents(events: RuntimeEvent[], filter: EventFilter): RuntimeEven
   }
 
   return compacted;
+}
+
+function EventLine({ event }: { event: RuntimeEvent }) {
+  const time = new Date(event.ts).toLocaleTimeString('en-US', { hour12: false });
+  const agentColor = event.agent === 'claude' ? 'text-purple-400' : 'text-green-400';
+  const agentLabel = event.agent === 'claude' ? 'Claude' : 'Codex';
+
+  switch (event.kind) {
+    case 'run.started':
+    case 'run.completed':
+    case 'run.failed':
+    case 'run.status':
+      return (
+        <div className="flex items-center gap-2 py-1 border-b border-gray-800/50">
+          <span className="text-gray-600">{time}</span>
+          <span className={`font-bold ${agentColor}`}>[{agentLabel}]</span>
+          <span className={event.kind === 'run.failed' ? 'text-red-400' : 'text-cyan-400'}>
+            {event.kind === 'run.started' ? '▸ Started' : event.kind === 'run.completed' ? '✓ Completed' : event.kind === 'run.failed' ? '✗ Failed' : event.title}
+          </span>
+        </div>
+      );
+
+    case 'tool.started':
+      return (
+        <div className="flex items-center gap-2">
+          <span className="text-gray-600">{time}</span>
+          <span className={`font-bold ${agentColor}`}>[{agentLabel}]</span>
+          <span className="text-yellow-400">⚙ {event.title}</span>
+          {event.text && <span className="text-gray-500 truncate">{event.text}</span>}
+        </div>
+      );
+
+    case 'tool.completed':
+      return (
+        <div className="flex items-center gap-2">
+          <span className="text-gray-600">{time}</span>
+          <span className={`font-bold ${agentColor}`}>[{agentLabel}]</span>
+          <span className="text-yellow-300">⚙ {event.title} <span className="text-green-400">done</span></span>
+        </div>
+      );
+
+    case 'tool.failed':
+      return (
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-gray-600">{time}</span>
+            <span className={`font-bold ${agentColor}`}>[{agentLabel}]</span>
+            <span className="text-red-400">⚙ {event.title} failed</span>
+          </div>
+          {event.text && <div className="ml-8 text-red-300">{event.text}</div>}
+        </div>
+      );
+
+    case 'command.stdout':
+      return (
+        <div className="ml-4 text-gray-200 whitespace-pre-wrap">{event.text}</div>
+      );
+
+    case 'command.stderr':
+      return (
+        <div className="ml-4 text-red-300 whitespace-pre-wrap">{event.text}</div>
+      );
+
+    case 'message.delta':
+    case 'message.final':
+      return (
+        <div className="bg-gray-900/50 rounded px-2 py-1 my-0.5">
+          <span className={`font-bold ${agentColor} mr-2`}>[{agentLabel}]</span>
+          <span className={event.kind === 'message.final' ? 'text-white' : 'text-green-300'}>{event.text}</span>
+        </div>
+      );
+
+    case 'diff.ready':
+      return (
+        <div className="flex items-center gap-2">
+          <span className="text-gray-600">{time}</span>
+          <span className={`font-bold ${agentColor}`}>[{agentLabel}]</span>
+          <span className="text-green-400 font-bold">📄 {event.title}</span>
+          <span className="text-gray-400">{event.text}</span>
+        </div>
+      );
+
+    case 'approval.requested':
+      return (
+        <div className="bg-yellow-900/30 border border-yellow-700 rounded px-2 py-1 my-1">
+          <span className="text-gray-600 mr-2">{time}</span>
+          <span className={`font-bold ${agentColor} mr-2`}>[{agentLabel}]</span>
+          <span className="text-yellow-300 font-bold">⚠ {event.title}</span>
+        </div>
+      );
+
+    case 'system.log':
+      return (
+        <div className="text-gray-600">
+          <span className="mr-2">{time}</span>
+          <span className={`${agentColor} mr-2`}>[{agentLabel}]</span>
+          {event.title && <span className="mr-1">{event.title}</span>}
+        </div>
+      );
+
+    default:
+      return (
+        <div>
+          <span className="text-gray-600 mr-2">{time}</span>
+          <span className={`font-bold ${agentColor} mr-2`}>[{agentLabel}]</span>
+          {event.title && <span className="mr-2">{event.title}</span>}
+          {event.text && <span className="text-gray-400">{event.text}</span>}
+        </div>
+      );
+  }
 }

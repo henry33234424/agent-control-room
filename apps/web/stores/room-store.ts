@@ -87,9 +87,20 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       case 'session.status':
         state.updateSession({ id: event.data.sessionId, status: event.data.status });
         break;
-      case 'session.updated':
-        state.updateSession(event.data);
+      case 'session.updated': {
+        // If session exists, update; if new, add it
+        const exists = state.sessions.some((s) => s.id === event.data.id);
+        if (exists) {
+          state.updateSession(event.data);
+        } else {
+          set((prev) => ({
+            sessions: [...prev.sessions, event.data].sort(
+              (a, b) => b.updatedAt.localeCompare(a.updatedAt),
+            ),
+          }));
+        }
         break;
+      }
       case 'approval.requested':
         state.addApproval(event.data);
         break;
