@@ -88,16 +88,29 @@ export class SessionService {
       const specific = await prisma.agentSession.findFirst({
         where: { id: preferredSessionId, roomId, agent },
       });
-      if (specific) return toSessionDto(specific);
+      if (specific) {
+        // Recover failed session to idle before returning
+        if (specific.status === 'failed') {
+          await this.updateStatus(specific.id, 'idle');
+          specific.status = 'idle';
+        }
+        return toSessionDto(specific);
+      }
     }
 
-    // Find an existing idle session for this agent
+    // Find an existing idle or failed session for this agent
     const existing = await prisma.agentSession.findFirst({
-      where: { roomId, agent, status: 'idle' },
+      where: { roomId, agent, status: { in: ['idle', 'failed'] } },
       orderBy: { updatedAt: 'desc' },
     });
 
-    if (existing) return toSessionDto(existing);
+    if (existing) {
+      if (existing.status === 'failed') {
+        await this.updateStatus(existing.id, 'idle');
+        existing.status = 'idle';
+      }
+      return toSessionDto(existing);
+    }
 
     // Create a new session
     const name = `${agent}-${Date.now()}`;

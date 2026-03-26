@@ -84,7 +84,7 @@ export interface WsApprovalResolved {
 
 export interface WsPinUpdated {
   type: 'pin.updated';
-  data: PinnedBriefItem[];
+  data: { roomId: string; items: PinnedBriefItem[] };
 }
 
 export interface WsHandoffCreated {

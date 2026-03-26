@@ -17,10 +17,11 @@ interface RoomState {
 
   // Actions
   setSnapshot: (data: {
-    room: Room;
+    room: Room | null;
     sessions: AgentSession[];
     recentMessages: ChatMessage[];
     pinnedBrief: PinnedBriefItem[];
+    pendingApprovals: Approval[];
   }) => void;
   addMessage: (msg: ChatMessage) => void;
   updateSession: (session: Partial<AgentSession> & { id: string }) => void;
@@ -42,7 +43,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       sessions: data.sessions,
       messages: data.recentMessages,
       pinnedBrief: data.pinnedBrief,
-      pendingApprovals: [],
+      pendingApprovals: data.pendingApprovals,
     }),
 
   addMessage: (msg) =>
@@ -59,7 +60,10 @@ export const useRoomStore = create<RoomState>((set, get) => ({
 
   addApproval: (approval) =>
     set((state) => ({
-      pendingApprovals: [...state.pendingApprovals, approval],
+      pendingApprovals: [
+        ...state.pendingApprovals.filter((existing) => existing.id !== approval.id),
+        approval,
+      ],
     })),
 
   resolveApproval: (id) =>
@@ -93,7 +97,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
         state.resolveApproval(event.data.id);
         break;
       case 'pin.updated':
-        set({ pinnedBrief: event.data });
+        set({ pinnedBrief: event.data.items });
         break;
       case 'handoff.created':
         // Handoff-summary message is already broadcast via message.created

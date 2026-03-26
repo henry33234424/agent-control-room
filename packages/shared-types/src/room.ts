@@ -1,4 +1,5 @@
 import type { AgentKind, SessionStatus, SessionMode } from './agent.js';
+import type { Approval } from './approval.js';
 import type { ChatMessage } from './chat-message.js';
 import type { PinnedBriefItem } from './pinned-brief.js';
 
@@ -30,4 +31,5 @@ export interface RoomSnapshot {
   sessions: AgentSession[];
   recentMessages: ChatMessage[];
   pinnedBrief: PinnedBriefItem[];
+  pendingApprovals: Approval[];
 }

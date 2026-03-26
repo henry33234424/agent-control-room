@@ -100,4 +100,44 @@ describe('normalizeCodexNotification', () => {
     expect(events).toHaveLength(1);
     expect(events[0].kind).toBe('review.completed');
   });
+
+  it('maps nested item/completed payloads from current codex app-server', () => {
+    const events = normalizeCodexNotification(
+      'item/completed',
+      { item: { type: 'command', stdout: 'nested output' }, threadId: 't1' },
+      ctx,
+    );
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toContain('command.stdout');
+    expect(kinds).toContain('tool.completed');
+  });
+
+  it('maps turn/completed using lastAgentMessage content', () => {
+    const events = normalizeCodexNotification(
+      'turn/completed',
+      {
+        lastAgentMessage: {
+          content: [{ type: 'text', text: 'OK' }],
+        },
+        threadId: 't1',
+      },
+      ctx,
+    );
+    expect(events.find((e) => e.kind === 'message.final')?.text).toBe('OK');
+  });
+
+  it('maps codex error notifications to system.log', () => {
+    const events = normalizeCodexNotification(
+      'error',
+      {
+        error: { message: 'Reconnecting... 5/5', additionalDetails: 'stream disconnected' },
+        willRetry: false,
+        threadId: 't1',
+      },
+      ctx,
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('system.log');
+    expect(events[0].level).toBe('error');
+  });
 });

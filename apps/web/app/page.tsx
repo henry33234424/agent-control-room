@@ -42,14 +42,31 @@ export default function HomePage() {
           <div className="space-y-2">
             <h2 className="text-sm font-semibold text-gray-400">Existing Rooms</h2>
             {rooms.map((r) => (
-              <button
-                key={r.id}
-                onClick={() => router.push(`/rooms/${r.id}`)}
-                className="w-full text-left p-3 rounded-lg border border-gray-800 bg-gray-900 hover:bg-gray-800 transition-colors"
-              >
-                <div className="font-medium">{r.name}</div>
-                <div className="text-xs text-gray-500 mt-0.5">{r.repoPath}</div>
-              </button>
+              <div key={r.id} className="flex items-center gap-2">
+                <button
+                  onClick={() => router.push(`/rooms/${r.id}`)}
+                  className="flex-1 text-left p-3 rounded-lg border border-gray-800 bg-gray-900 hover:bg-gray-800 transition-colors"
+                >
+                  <div className="font-medium">{r.name}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{r.repoPath}</div>
+                </button>
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (!confirm(`Delete room "${r.name}"?`)) return;
+                    try {
+                      await api.rooms.delete(r.id);
+                      setRooms((prev) => prev.filter((x) => x.id !== r.id));
+                    } catch (err) {
+                      alert(err instanceof Error ? err.message : 'Failed to delete room');
+                    }
+                  }}
+                  className="p-3 text-gray-500 hover:text-red-400 transition-colors"
+                  title="Delete room"
+                >
+                  ×
+                </button>
+              </div>
             ))}
           </div>
         )}

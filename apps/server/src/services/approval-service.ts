@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { roomChannel } from '../ws/room-channel.js';
 import { eventService } from './event-service.js';
 import { randomUUID } from 'node:crypto';
+import { toApprovalDto } from '../lib/dto.js';
 
 export interface CreateApprovalInput {
   roomId: string;
@@ -19,6 +20,22 @@ type ApprovalDecision = 'approved' | 'denied';
 class ApprovalService {
   private pendingResolvers = new Map<string, (decision: ApprovalDecision) => void>();
 
+  async listPendingByRoom(roomId: string): Promise<Approval[]> {
+    const approvals = await prisma.approval.findMany({
+      where: { roomId, status: 'pending' },
+      include: {
+        run: {
+          select: {
+            agentSessionId: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return approvals.map(toApprovalDto);
+  }
+
   async createApproval(input: CreateApprovalInput): Promise<Approval> {
     const approval = await prisma.approval.create({
       data: {
@@ -31,18 +48,13 @@ class ApprovalService {
       },
     });
 
-    const dto: Approval = {
-      id: approval.id,
-      roomId: approval.roomId,
-      runId: approval.runId,
-      sessionId: input.sessionId,
-      agent: approval.agent as AgentKind,
-      approvalType: approval.approvalType as ApprovalType,
-      title: approval.title,
-      payload: input.payload,
-      status: 'pending',
-      createdAt: approval.createdAt.toISOString(),
-    };
+    const dto: Approval = toApprovalDto({
+      ...approval,
+      run: {
+        agentSessionId: input.sessionId,
+      },
+      payloadJson: input.payload ? JSON.stringify(input.payload) : null,
+    });
 
     await eventService.emitAndBroadcast({
       id: randomUUID(),
@@ -85,19 +97,10 @@ class ApprovalService {
     // Look up run to get sessionId
     const run = await prisma.run.findUnique({ where: { id: approval.runId } });
 
-    const dto: Approval = {
-      id: approval.id,
-      roomId: approval.roomId,
-      runId: approval.runId,
-      sessionId: run?.agentSessionId ?? '',
-      agent: approval.agent as AgentKind,
-      approvalType: approval.approvalType as ApprovalType,
-      title: approval.title,
-      payload: approval.payloadJson ? JSON.parse(approval.payloadJson) : undefined,
-      status: decision,
-      createdAt: approval.createdAt.toISOString(),
-      resolvedAt: approval.resolvedAt?.toISOString(),
-    };
+    const dto: Approval = toApprovalDto({
+      ...approval,
+      run: run ? { agentSessionId: run.agentSessionId } : null,
+    });
 
     // Write resolved runtime event
     await eventService.emitAndBroadcast({
@@ -131,19 +134,10 @@ class ApprovalService {
     const run = await prisma.run.findUnique({ where: { id: approval.runId } });
 
     // Broadcast cancelled so frontend clears the pending approval card
-    const dto: Approval = {
-      id: approval.id,
-      roomId: approval.roomId,
-      runId: approval.runId,
-      sessionId: run?.agentSessionId ?? '',
-      agent: approval.agent as AgentKind,
-      approvalType: approval.approvalType as ApprovalType,
-      title: approval.title,
-      payload: approval.payloadJson ? JSON.parse(approval.payloadJson) : undefined,
-      status: 'cancelled',
-      createdAt: approval.createdAt.toISOString(),
-      resolvedAt: approval.resolvedAt?.toISOString(),
-    };
+    const dto: Approval = toApprovalDto({
+      ...approval,
+      run: run ? { agentSessionId: run.agentSessionId } : null,
+    });
     roomChannel.broadcast(approval.roomId, { type: 'approval.resolved', data: dto });
 
     // Write runtime event

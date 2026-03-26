@@ -27,7 +27,11 @@ export function normalizeCodexNotification(
 
   switch (method) {
     case 'item/started': {
-      const itemType = (params.type as string) ?? 'task';
+      const item = getRecord(params.item) ?? params;
+      const itemType = (item.type as string) ?? 'task';
+
+      if (itemType === 'userMessage') return [];
+
       // Detect command execution
       if (itemType === 'command' || itemType === 'shell') {
         return [
@@ -36,7 +40,7 @@ export function normalizeCodexNotification(
             id: randomUUID(),
             kind: 'tool.started',
             title: 'Command',
-            text: `$ ${(params.command as string) ?? (params.summary as string) ?? ''}`,
+            text: `$ ${(item.command as string) ?? (item.summary as string) ?? ''}`,
             payload: params,
             level: 'info',
           },
@@ -48,7 +52,7 @@ export function normalizeCodexNotification(
           id: randomUUID(),
           kind: 'tool.started',
           title: itemType,
-          text: (params.summary as string) ?? JSON.stringify(params),
+          text: (item.summary as string) ?? JSON.stringify(item),
           payload: params,
           level: 'info',
         },
@@ -56,37 +60,41 @@ export function normalizeCodexNotification(
     }
 
     case 'item/completed': {
-      const itemType = (params.type as string) ?? 'task';
+      const item = getRecord(params.item) ?? params;
+      const itemType = (item.type as string) ?? 'task';
+
+      if (itemType === 'userMessage') return [];
+
       const events: RuntimeEvent[] = [];
 
       // Emit command output if available
-      if (params.stdout) {
+      if (item.stdout) {
         events.push({
           ...base,
           id: randomUUID(),
           kind: 'command.stdout',
-          text: truncate(String(params.stdout), 4000),
+          text: truncate(String(item.stdout), 4000),
           level: 'info',
         });
       }
-      if (params.stderr) {
+      if (item.stderr) {
         events.push({
           ...base,
           id: randomUUID(),
           kind: 'command.stderr',
-          text: truncate(String(params.stderr), 4000),
+          text: truncate(String(item.stderr), 4000),
           level: 'error',
         });
       }
 
       // Emit diff.ready if file changes detected
-      if (params.changedFiles || params.filePath) {
+      if (item.changedFiles || item.filePath) {
         events.push({
           ...base,
           id: randomUUID(),
           kind: 'diff.ready',
           title: 'Files changed',
-          text: String(params.changedFiles ?? params.filePath ?? ''),
+          text: String(item.changedFiles ?? item.filePath ?? ''),
           payload: params,
           level: 'info',
         });
@@ -95,11 +103,11 @@ export function normalizeCodexNotification(
       events.push({
         ...base,
         id: randomUUID(),
-        kind: params.error ? 'tool.failed' : 'tool.completed',
+        kind: item.error ? 'tool.failed' : 'tool.completed',
         title: itemType,
-        text: (params.summary as string) ?? '',
+        text: (item.summary as string) ?? '',
         payload: params,
-        level: params.error ? 'error' : 'info',
+        level: item.error ? 'error' : 'info',
       });
 
       return events;
@@ -111,21 +119,27 @@ export function normalizeCodexNotification(
           ...base,
           id: randomUUID(),
           kind: 'message.delta',
-          text: (params.delta as string) ?? (params.content as string) ?? '',
+          text:
+            (params.delta as string) ??
+            (params.content as string) ??
+            (getRecord(params.item)?.delta as string | undefined) ??
+            (getRecord(params.item)?.text as string | undefined) ??
+            '',
           level: 'info',
         },
       ];
 
     case 'turn/completed': {
       const events: RuntimeEvent[] = [];
+      const text = extractTurnText(params);
 
       // Emit message.final with the turn summary
-      if (params.summary || params.content) {
+      if (text) {
         events.push({
           ...base,
           id: randomUUID(),
           kind: 'message.final',
-          text: (params.summary as string) ?? (params.content as string) ?? '',
+          text,
           level: 'info',
         });
       }
@@ -135,7 +149,7 @@ export function normalizeCodexNotification(
         id: randomUUID(),
         kind: 'run.completed',
         title: 'Turn completed',
-        text: (params.summary as string) ?? '',
+        text,
         payload: params,
         level: 'info',
       });
@@ -151,7 +165,10 @@ export function normalizeCodexNotification(
           id: randomUUID(),
           kind: 'review.started',
           title: 'Review started',
-          text: (params.target as string) ?? '',
+          text:
+            (params.target as string) ??
+            (getRecord(params.reviewOutput)?.overallExplanation as string | undefined) ??
+            '',
           payload: params,
           level: 'info',
         },
@@ -164,9 +181,22 @@ export function normalizeCodexNotification(
           id: randomUUID(),
           kind: 'review.completed',
           title: 'Review completed',
-          text: (params.summary as string) ?? '',
+          text: extractReviewText(params),
           payload: params,
           level: 'info',
+        },
+      ];
+
+    case 'error':
+      return [
+        {
+          ...base,
+          id: randomUUID(),
+          kind: 'system.log',
+          title: 'Codex error',
+          text: extractErrorText(params),
+          payload: params,
+          level: params.willRetry === true ? 'warn' : 'error',
         },
       ];
 
@@ -186,4 +216,62 @@ export function normalizeCodexNotification(
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + '…' : s;
+}
+
+function getRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
+}
+
+function extractTurnText(params: Record<string, unknown>): string {
+  return (
+    extractAgentMessageText(
+      getRecord(params.lastAgentMessage) ?? getRecord(params.last_agent_message),
+    ) ||
+    (getRecord(params.turn)?.summary as string | undefined) ||
+    (getRecord(params.turn)?.content as string | undefined) ||
+    (params.summary as string | undefined) ||
+    (params.content as string | undefined) ||
+    ''
+  );
+}
+
+function extractReviewText(params: Record<string, unknown>): string {
+  return (
+    (getRecord(params.reviewOutput)?.overallExplanation as string | undefined) ||
+    (getRecord(params.review_output)?.overall_explanation as string | undefined) ||
+    (getRecord(params.turn)?.summary as string | undefined) ||
+    (params.summary as string | undefined) ||
+    (params.content as string | undefined) ||
+    ''
+  );
+}
+
+function extractAgentMessageText(message: Record<string, unknown> | undefined): string {
+  if (!message) return '';
+  const content = message.content;
+  if (!Array.isArray(content)) return typeof content === 'string' ? content : '';
+
+  return content
+    .map((part) => {
+      if (typeof part === 'string') return part;
+      const record = getRecord(part);
+      return typeof record?.text === 'string' ? record.text : '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+function extractErrorText(params: Record<string, unknown>): string {
+  const error = getRecord(params.error);
+  if (!error) return JSON.stringify(params);
+
+  const message = typeof error.message === 'string' ? error.message : 'Codex error';
+  const details =
+    typeof error.additionalDetails === 'string'
+      ? error.additionalDetails
+      : typeof error.additional_details === 'string'
+        ? error.additional_details
+        : '';
+
+  return details ? `${message}: ${details}` : message;
 }

@@ -1,22 +1,64 @@
 'use client';
 
 import { useEffect } from 'react';
+import { api } from '@/lib/api-client';
 import { wsClient } from '@/lib/ws-client';
 import { useRoomStore } from '@/stores/room-store';
 import { useConsoleStore } from '@/stores/console-store';
 import { useUIStore } from '@/stores/ui-store';
 
-export function useWebSocket(roomId: string | null) {
+export function useWebSocket(roomId: string | null, enabled = true) {
   const handleWsEvent = useRoomStore((s) => s.handleWsEvent);
   const appendEvent = useConsoleStore((s) => s.appendEvent);
   const clearEvents = useConsoleStore((s) => s.clearEvents);
+  const loadEvents = useConsoleStore((s) => s.loadEvents);
   const setCurrentRunId = useConsoleStore((s) => s.setCurrentRunId);
 
   useEffect(() => {
-    if (!roomId) return;
+    if (!roomId || !enabled) return;
+
+    const restoreSelectedRun = async () => {
+      const selectedSessionId = useUIStore.getState().selectedSessionId;
+      if (!selectedSessionId) return;
+
+      const currentRunId = useConsoleStore.getState().currentRunId;
+
+      try {
+        if (currentRunId) {
+          const result = await api.runs.events(roomId, currentRunId);
+          loadEvents(result.items);
+          return;
+        }
+
+        const runs = await api.runs.list(roomId, selectedSessionId);
+        if (runs.length === 0) {
+          setCurrentRunId(null);
+          loadEvents([]);
+          return;
+        }
+
+        setCurrentRunId(runs[0].id);
+        const result = await api.runs.events(roomId, runs[0].id);
+        loadEvents(result.items);
+      } catch {
+        setCurrentRunId(null);
+        loadEvents([]);
+      }
+    };
 
     const unsubscribe = wsClient.onEvent((event) => {
+      // Ignore events that arrive after room switch but before WS re-subscribes
+      if ('data' in event && event.data && typeof event.data === 'object') {
+        const d = event.data as any;
+        // Most events have data.roomId; room.snapshot has data.room.id
+        const eventRoomId = d.roomId ?? d.room?.id;
+        if (eventRoomId && eventRoomId !== roomId) return;
+      }
       handleWsEvent(event);
+
+      if (event.type === 'room.snapshot') {
+        void restoreSelectedRun();
+      }
 
       if (event.type === 'run.status') {
         const selectedSessionId = useUIStore.getState().selectedSessionId;
@@ -50,5 +92,5 @@ export function useWebSocket(roomId: string | null) {
       unsubscribe();
       wsClient.unsubscribe();
     };
-  }, [roomId, handleWsEvent, appendEvent, clearEvents, setCurrentRunId]);
+  }, [roomId, enabled, handleWsEvent, appendEvent, clearEvents, loadEvents, setCurrentRunId]);
 }

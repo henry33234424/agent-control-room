@@ -2,7 +2,7 @@ import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
-import { config } from './config.js';
+import { config, corsMethods } from './config.js';
 import { prisma } from './db.js';
 import { roomRoutes } from './routes/rooms.js';
 import { sessionRoutes } from './routes/sessions.js';
@@ -28,8 +28,11 @@ async function main() {
   });
 
   // Plugins
-  await app.register(cors, { origin: config.corsOrigin });
   await app.register(websocket);
+  await app.register(cors, {
+    origin: true, // Allow all origins (WS + HTTP) — safe for local-first single-user app
+    methods: corsMethods,
+  });
 
   // Routes
   await app.register(roomRoutes);

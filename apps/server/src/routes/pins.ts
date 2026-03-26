@@ -133,5 +133,5 @@ async function broadcastPins(roomId: string): Promise<void> {
     where: { roomId },
     orderBy: { sortOrder: 'asc' },
   });
-  roomChannel.broadcast(roomId, { type: 'pin.updated', data: items.map(toPinDto) });
+  roomChannel.broadcast(roomId, { type: 'pin.updated', data: { roomId, items: items.map(toPinDto) } });
 }

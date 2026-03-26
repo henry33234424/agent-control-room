@@ -101,9 +101,10 @@ export class CodexRpcClient extends EventEmitter {
    */
   async initialize(): Promise<unknown> {
     const result = await this.call('initialize', {
-      clientInfo: { name: 'control-room', version: '0.1.0' },
+      clientInfo: { name: 'control-room', title: 'Control Room', version: '0.1.0' },
+      capabilities: { experimentalApi: true, optOutNotificationMethods: [] },
     });
-    this.notify('initialized');
+    this.notify('initialized', {});
     return result;
   }
 

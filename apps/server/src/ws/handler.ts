@@ -25,12 +25,13 @@ export async function registerWebSocket(app: FastifyInstance) {
             const room = await prisma.room.findUnique({
               where: { id: event.roomId },
               include: {
-                sessions: true,
+                sessions: { orderBy: { updatedAt: 'desc' } },
                 chatMessages: { orderBy: { createdAt: 'desc' }, take: 50 },
                 pinnedBriefItems: { orderBy: { sortOrder: 'asc' } },
               },
             });
             if (room) {
+              const pendingApprovals = await approvalService.listPendingByRoom(event.roomId);
               ws.send(
                 JSON.stringify({
                   type: 'room.snapshot',
@@ -39,6 +40,7 @@ export async function registerWebSocket(app: FastifyInstance) {
                     sessions: room.sessions.map(toSessionDto),
                     recentMessages: room.chatMessages.reverse().map(toMessageDto),
                     pinnedBrief: room.pinnedBriefItems.map(toPinDto),
+                    pendingApprovals,
                   },
                 }),
               );

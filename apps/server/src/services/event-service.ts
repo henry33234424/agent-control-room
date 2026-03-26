@@ -8,35 +8,37 @@ import { roomChannel } from '../ws/room-channel.js';
  */
 export class EventService {
   async emitAndBroadcast(event: RuntimeEvent): Promise<void> {
-    // Sanitize before persisting
-    const sanitizedText = event.text ? sanitizeText(event.text) : undefined;
-    const sanitizedPayload = event.payload ? sanitizePayload(event.payload) : undefined;
+    try {
+      const sanitizedText = event.text != null ? sanitizeText(event.text) : undefined;
+      const sanitizedPayload = event.payload ? sanitizePayload(event.payload) : undefined;
 
-    // Persist
-    await prisma.runtimeEvent.create({
-      data: {
-        id: event.id,
-        roomId: event.roomId,
-        agent: event.agent,
-        sessionId: event.sessionId,
-        runId: event.runId,
-        worktreeId: event.worktreeId,
-        kind: event.kind,
-        title: event.title,
+      await prisma.runtimeEvent.create({
+        data: {
+          id: event.id,
+          roomId: event.roomId,
+          agent: event.agent,
+          sessionId: event.sessionId,
+          runId: event.runId,
+          worktreeId: event.worktreeId,
+          kind: event.kind,
+          title: event.title,
+          text: sanitizedText,
+          payloadJson: sanitizedPayload ? JSON.stringify(sanitizedPayload) : undefined,
+          level: event.level ?? 'info',
+          ts: new Date(event.ts),
+        },
+      });
+
+      const broadcastEvent: RuntimeEvent = {
+        ...event,
         text: sanitizedText,
-        payloadJson: sanitizedPayload ? JSON.stringify(sanitizedPayload) : undefined,
-        level: event.level ?? 'info',
-        ts: new Date(event.ts),
-      },
-    });
-
-    // Broadcast
-    const broadcastEvent: RuntimeEvent = {
-      ...event,
-      text: sanitizedText,
-      payload: sanitizedPayload,
-    };
-    roomChannel.broadcast(event.roomId, { type: 'runtime.event', data: broadcastEvent });
+        payload: sanitizedPayload,
+      };
+      roomChannel.broadcast(event.roomId, { type: 'runtime.event', data: broadcastEvent });
+    } catch (err) {
+      // Never let event persistence crash the server
+      console.error('[event-service] Failed to emit event:', event.kind, err);
+    }
   }
 
   async emitBatch(events: RuntimeEvent[]): Promise<void> {

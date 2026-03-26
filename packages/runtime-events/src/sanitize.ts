@@ -13,14 +13,21 @@ const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /ghp_[a-zA-Z0-9]{36}/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
 ];
 
-export function sanitizeText(text: string): string {
+export function sanitizeText(text: unknown): string {
+  if (typeof text !== 'string') return String(text ?? '');
   let result = text;
   for (const { pattern, replacement } of SENSITIVE_PATTERNS) {
+    pattern.lastIndex = 0;
     result = result.replace(pattern, replacement);
   }
   return result;
 }
 
-export function sanitizePayload(payload: Record<string, unknown>): Record<string, unknown> {
-  return JSON.parse(sanitizeText(JSON.stringify(payload)));
+export function sanitizePayload(payload: unknown): Record<string, unknown> | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+  try {
+    return JSON.parse(sanitizeText(JSON.stringify(payload)));
+  } catch {
+    return payload as Record<string, unknown>;
+  }
 }

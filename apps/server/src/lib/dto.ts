@@ -11,6 +11,8 @@ import type {
   SessionStatus,
   RuntimeEventKind,
   EventLevel,
+  Approval,
+  ApprovalType,
 } from '@control-room/shared-types';
 
 // Prisma returns null for optional fields; our DTOs use undefined.
@@ -152,5 +154,37 @@ export function toPinDto(p: PrismaPin): PinnedBriefItem {
     version: p.version,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
+  };
+}
+
+type PrismaApproval = {
+  id: string;
+  roomId: string;
+  runId: string;
+  agent: string;
+  approvalType: string;
+  title: string;
+  payloadJson: string | null;
+  status: string;
+  createdAt: Date;
+  resolvedAt: Date | null;
+  run?: {
+    agentSessionId: string;
+  } | null;
+};
+
+export function toApprovalDto(a: PrismaApproval): Approval {
+  return {
+    id: a.id,
+    roomId: a.roomId,
+    runId: a.runId,
+    sessionId: a.run?.agentSessionId ?? '',
+    agent: a.agent as AgentKind,
+    approvalType: a.approvalType as ApprovalType,
+    title: a.title,
+    payload: a.payloadJson ? JSON.parse(a.payloadJson) : undefined,
+    status: a.status as Approval['status'],
+    createdAt: a.createdAt.toISOString(),
+    resolvedAt: a.resolvedAt?.toISOString() ?? undefined,
   };
 }

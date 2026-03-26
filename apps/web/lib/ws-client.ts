@@ -11,6 +11,7 @@ export class WsClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
   private maxReconnectDelay = 30000;
+  private pendingEvents: ClientWsEvent[] = [];
 
   subscribe(roomId: string): void {
     this.roomId = roomId;
@@ -22,6 +23,7 @@ export class WsClient {
       this.send({ type: 'room.unsubscribe', roomId: this.roomId });
     }
     this.roomId = null;
+    this.pendingEvents = [];
     this.disconnect();
   }
 
@@ -33,7 +35,10 @@ export class WsClient {
   send(event: ClientWsEvent): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(event));
+      return;
     }
+
+    this.pendingEvents.push(event);
   }
 
   private connect(): void {
@@ -44,7 +49,13 @@ export class WsClient {
     this.ws.onopen = () => {
       this.reconnectDelay = 1000;
       if (this.roomId) {
-        this.send({ type: 'room.subscribe', roomId: this.roomId });
+        this.ws?.send(JSON.stringify({ type: 'room.subscribe', roomId: this.roomId }));
+      }
+      const queuedEvents = this.pendingEvents;
+      this.pendingEvents = [];
+      for (const event of queuedEvents) {
+        if (event.type === 'room.subscribe' || event.type === 'room.unsubscribe') continue;
+        this.ws?.send(JSON.stringify(event));
       }
     };
 

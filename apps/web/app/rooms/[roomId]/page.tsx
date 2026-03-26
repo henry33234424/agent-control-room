@@ -20,12 +20,20 @@ export default function RoomPage() {
   const loadEvents = useConsoleStore((s) => s.loadEvents);
   const setCurrentRunId = useConsoleStore((s) => s.setCurrentRunId);
 
-  // Connect WebSocket
-  useWebSocket(roomId);
+  // Connect WebSocket after initial HTTP snapshot is loaded to avoid HTTP/WS snapshot races.
+  useWebSocket(roomId, !loading);
 
   // Load initial snapshot + auto-select most recent session + load its events
   useEffect(() => {
     if (!roomId) return;
+
+    // Immediately clear stale data from previous room
+    setSnapshot({ room: null, sessions: [], recentMessages: [], pinnedBrief: [], pendingApprovals: [] });
+    setSelectedSessionId(null);
+    setConsoleSession(null);
+    loadEvents([]);
+    setCurrentRunId(null);
+    setLoading(true);
 
     api.rooms
       .get(roomId)

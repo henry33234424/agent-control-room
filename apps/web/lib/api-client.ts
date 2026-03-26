@@ -49,6 +49,7 @@ export const api = {
     get: (id: string) => request<RoomSnapshot>(`/api/rooms/${id}`),
     create: (data: CreateRoomRequest) =>
       request<Room>('/api/rooms', { method: 'POST', body: JSON.stringify(data) }),
+    delete: (id: string) => request<{ ok: boolean }>(`/api/rooms/${id}`, { method: 'DELETE' }),
   },
   sessions: {
     list: (roomId: string) => request<AgentSession[]>(`/api/rooms/${roomId}/sessions`),
