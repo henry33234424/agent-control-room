@@ -15,6 +15,11 @@ export interface CreateMessageInput {
   pinned?: boolean;
 }
 
+export interface UpdateMessageInput {
+  id: string;
+  content: string;
+}
+
 export class MessageService {
   async create(input: CreateMessageInput): Promise<ChatMessage> {
     const msg = await prisma.chatMessage.create({
@@ -34,6 +39,19 @@ export class MessageService {
 
     const chatMsg = toMessageDto(msg);
     roomChannel.broadcast(input.roomId, { type: 'message.created', data: chatMsg });
+    return chatMsg;
+  }
+
+  async update(input: UpdateMessageInput): Promise<ChatMessage> {
+    const msg = await prisma.chatMessage.update({
+      where: { id: input.id },
+      data: {
+        content: input.content,
+      },
+    });
+
+    const chatMsg = toMessageDto(msg);
+    roomChannel.broadcast(chatMsg.roomId, { type: 'message.updated', data: chatMsg });
     return chatMsg;
   }
 }

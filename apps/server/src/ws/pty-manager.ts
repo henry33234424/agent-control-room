@@ -1,45 +1,58 @@
 import { createRequire } from 'node:module';
 import type { WebSocket } from '@fastify/websocket';
+import type { AgentKind } from '@control-room/shared-types';
 import type { IPty } from 'node-pty';
+import { messageService } from '../services/message-service.js';
 
 // node-pty is a native module that must be loaded via require()
 const require_ = createRequire(import.meta.url);
 const pty: { spawn: typeof import('node-pty').spawn } = require_('node-pty');
 
+interface ReplyTracking {
+  roomId: string;
+  sessionId: string;
+  agent: AgentKind;
+  replyToMessageId?: string;
+  messageId?: string;
+  text: string;
+  lastFlushedText: string;
+  pendingEcho: string;
+  flushTimer: NodeJS.Timeout | null;
+  flushing: boolean;
+  needsFlush: boolean;
+}
+
 interface PtySession {
   ptyProcess: IPty;
   ws: WebSocket | null;
-  agent: 'claude' | 'codex';
+  agent: AgentKind;
   sessionId: string;
   roomId: string;
   buffer: string;
   detachTimer: NodeJS.Timeout | null;
+  replyTracking: ReplyTracking | null;
 }
 
-/**
- * Manages PTY sessions — one per agent session.
- * Bridges PTY I/O with WebSocket for real-time terminal in browser.
- */
 class PtyManager {
   private sessions = new Map<string, PtySession>();
   private maxBufferChars = 200_000;
   private detachTtlMs = 10 * 60 * 1000;
+  private flushDebounceMs = 300;
 
-  /**
-   * Spawn a CLI in a real PTY and wire it to the WebSocket.
-   */
   start(input: {
     sessionId: string;
     roomId: string;
-    agent: 'claude' | 'codex';
+    agent: AgentKind;
     command: string;
     args: string[];
     cwd: string;
-    ws: WebSocket;
+    ws?: WebSocket | null;
     cols?: number;
     rows?: number;
   }): void {
-    this.detachBySocket(input.ws);
+    if (input.ws) {
+      this.detachBySocket(input.ws);
+    }
 
     const existing = this.sessions.get(input.sessionId);
     if (existing) {
@@ -47,10 +60,12 @@ class PtyManager {
         clearTimeout(existing.detachTimer);
         existing.detachTimer = null;
       }
-      existing.ws = input.ws;
-      existing.ptyProcess.resize(input.cols ?? 120, input.rows ?? 40);
-      if (existing.buffer && input.ws.readyState === 1) {
-        input.ws.send(JSON.stringify({ type: 'pty.output', sessionId: input.sessionId, data: existing.buffer }));
+      if (input.ws) {
+        existing.ws = input.ws;
+        existing.ptyProcess.resize(input.cols ?? 120, input.rows ?? 40);
+        if (existing.buffer && input.ws.readyState === 1) {
+          input.ws.send(JSON.stringify({ type: 'pty.output', sessionId: input.sessionId, data: existing.buffer }));
+        }
       }
       return;
     }
@@ -65,25 +80,27 @@ class PtyManager {
 
     const session: PtySession = {
       ptyProcess,
-      ws: input.ws,
+      ws: input.ws ?? null,
       agent: input.agent,
       sessionId: input.sessionId,
       roomId: input.roomId,
       buffer: '',
       detachTimer: null,
+      replyTracking: null,
     };
 
     this.sessions.set(input.sessionId, session);
 
-    // PTY → WebSocket (terminal output to browser)
     ptyProcess.onData((data: string) => {
       session.buffer = this.appendBuffer(session.buffer, data);
       if (session.ws?.readyState === 1) {
         session.ws.send(JSON.stringify({ type: 'pty.output', sessionId: input.sessionId, data }));
       }
+      this.handleTranscriptChunk(session, data);
     });
 
     ptyProcess.onExit(({ exitCode }) => {
+      void this.finalizeReplyTracking(session);
       if (session.ws?.readyState === 1) {
         session.ws.send(JSON.stringify({
           type: 'pty.exit',
@@ -98,9 +115,10 @@ class PtyManager {
     });
   }
 
-  /**
-   * Forward keyboard input from browser to PTY.
-   */
+  has(sessionId: string): boolean {
+    return this.sessions.has(sessionId);
+  }
+
   write(sessionId: string, data: string): void {
     const session = this.sessions.get(sessionId);
     if (session) {
@@ -115,9 +133,6 @@ class PtyManager {
     }
   }
 
-  /**
-   * Resize the PTY terminal.
-   */
   resize(sessionId: string, cols: number, rows: number): void {
     const session = this.sessions.get(sessionId);
     if (session) {
@@ -132,14 +147,14 @@ class PtyManager {
     }
   }
 
-  /**
-   * Kill a PTY session.
-   */
   kill(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session) {
       if (session.detachTimer) {
         clearTimeout(session.detachTimer);
+      }
+      if (session.replyTracking?.flushTimer) {
+        clearTimeout(session.replyTracking.flushTimer);
       }
       session.ptyProcess.kill();
       this.sessions.delete(sessionId);
@@ -149,25 +164,14 @@ class PtyManager {
   killForSocket(ws: WebSocket, sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session && session.ws === ws) {
-      if (session.detachTimer) {
-        clearTimeout(session.detachTimer);
-      }
-      session.ptyProcess.kill();
-      this.sessions.delete(sessionId);
+      this.kill(sessionId);
     }
   }
 
-  /**
-   * Kill all PTY sessions.
-   */
   killAll(): void {
     for (const [id] of this.sessions) {
       this.kill(id);
     }
-  }
-
-  has(sessionId: string): boolean {
-    return this.sessions.has(sessionId);
   }
 
   detachBySocket(ws: WebSocket): void {
@@ -177,6 +181,36 @@ class PtyManager {
         this.scheduleDetachCleanup(session);
       }
     }
+  }
+
+  dispatchPrompt(input: {
+    roomId: string;
+    sessionId: string;
+    agent: AgentKind;
+    prompt: string;
+    replyToMessageId?: string;
+  }): void {
+    const session = this.sessions.get(input.sessionId);
+    if (!session) {
+      throw new Error(`PTY session ${input.sessionId} is not running`);
+    }
+
+    void this.finalizeReplyTracking(session);
+
+    session.replyTracking = {
+      roomId: input.roomId,
+      sessionId: input.sessionId,
+      agent: input.agent,
+      replyToMessageId: input.replyToMessageId,
+      text: '',
+      lastFlushedText: '',
+      pendingEcho: input.prompt,
+      flushTimer: null,
+      flushing: false,
+      needsFlush: false,
+    };
+
+    session.ptyProcess.write(`${input.prompt}\r`);
   }
 
   private appendBuffer(buffer: string, data: string): string {
@@ -200,6 +234,135 @@ class PtyManager {
       this.sessions.delete(session.sessionId);
     }, this.detachTtlMs);
   }
+
+  private handleTranscriptChunk(session: PtySession, rawData: string): void {
+    const tracking = session.replyTracking;
+    if (!tracking) return;
+
+    const sanitized = sanitizeTerminalText(rawData);
+    if (!sanitized) return;
+
+    const suppressed = suppressPromptEcho(sanitized, tracking.pendingEcho);
+    tracking.pendingEcho = suppressed.pendingEcho;
+
+    if (!suppressed.text) return;
+
+    tracking.text += suppressed.text;
+    this.scheduleReplyFlush(session);
+  }
+
+  private scheduleReplyFlush(session: PtySession): void {
+    const tracking = session.replyTracking;
+    if (!tracking) return;
+
+    if (tracking.flushTimer) {
+      clearTimeout(tracking.flushTimer);
+    }
+
+    tracking.flushTimer = setTimeout(() => {
+      tracking.flushTimer = null;
+      void this.flushReplyTracking(session);
+    }, this.flushDebounceMs);
+  }
+
+  private async flushReplyTracking(session: PtySession): Promise<void> {
+    const tracking = session.replyTracking;
+    if (!tracking) return;
+
+    if (tracking.flushing) {
+      tracking.needsFlush = true;
+      return;
+    }
+
+    const normalizedText = tracking.text.trim();
+    if (!normalizedText || normalizedText === tracking.lastFlushedText) {
+      return;
+    }
+
+    tracking.flushing = true;
+    try {
+      const content = renderTranscriptMessage(tracking.text);
+      if (!tracking.messageId) {
+        const msg = await messageService.create({
+          roomId: tracking.roomId,
+          sessionId: tracking.sessionId,
+          agent: tracking.agent,
+          role: 'agent',
+          content,
+          replyToMessageId: tracking.replyToMessageId,
+          selectable: true,
+        });
+        tracking.messageId = msg.id;
+      } else {
+        await messageService.update({ id: tracking.messageId, content });
+      }
+
+      tracking.lastFlushedText = normalizedText;
+    } finally {
+      tracking.flushing = false;
+      if (tracking.needsFlush) {
+        tracking.needsFlush = false;
+        void this.flushReplyTracking(session);
+      }
+    }
+  }
+
+  private async finalizeReplyTracking(session: PtySession): Promise<void> {
+    const tracking = session.replyTracking;
+    if (!tracking) return;
+
+    if (tracking.flushTimer) {
+      clearTimeout(tracking.flushTimer);
+      tracking.flushTimer = null;
+    }
+
+    await this.flushReplyTracking(session);
+    session.replyTracking = null;
+  }
+}
+
+function sanitizeTerminalText(data: string): string {
+  return data
+    .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+    .replace(/\u0007/g, '')
+    .replace(/\r/g, '')
+    .replace(/\u001b>/g, '')
+    .replace(/\u001b=/g, '');
+}
+
+function suppressPromptEcho(
+  text: string,
+  pendingEcho: string,
+): { text: string; pendingEcho: string } {
+  if (!pendingEcho || !text) {
+    return { text, pendingEcho };
+  }
+
+  let textIndex = 0;
+  let echoIndex = 0;
+
+  while (textIndex < text.length && echoIndex < pendingEcho.length) {
+    if (text[textIndex] === pendingEcho[echoIndex]) {
+      textIndex += 1;
+      echoIndex += 1;
+      continue;
+    }
+    if (text[textIndex] === '\n' && pendingEcho[echoIndex] === '\r') {
+      echoIndex += 1;
+      continue;
+    }
+    break;
+  }
+
+  return {
+    text: text.slice(textIndex),
+    pendingEcho: pendingEcho.slice(echoIndex),
+  };
+}
+
+function renderTranscriptMessage(text: string): string {
+  const safe = text.replace(/```/g, '``` ');
+  return `\`\`\`text\n${safe}\n\`\`\``;
 }
 
 export const ptyManager = new PtyManager();

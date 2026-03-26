@@ -24,6 +24,7 @@ export interface SendMessageRequest {
   content: string;
   mentionTarget: MentionTarget;
   sessionId?: string;
+  selectedMessageIds?: string[];
 }
 
 export interface ListMessagesQuery {

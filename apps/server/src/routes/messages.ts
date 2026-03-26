@@ -1,43 +1,70 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import type { SendMessageRequest } from '@control-room/shared-types';
-import { roomChannel } from '../ws/room-channel.js';
-import { orchestrator } from '../orchestrator/room-orchestrator.js';
 import { toMessageDto } from '../lib/dto.js';
+import { messageService } from '../services/message-service.js';
+import { interactiveDispatchService } from '../services/interactive-dispatch-service.js';
 
 export async function messageRoutes(app: FastifyInstance) {
   app.post<{ Params: { roomId: string }; Body: SendMessageRequest }>(
     '/api/rooms/:roomId/messages',
     async (req, reply) => {
       const { roomId } = req.params;
-      const { content, mentionTarget, sessionId } = req.body;
+      const { content, mentionTarget, sessionId, selectedMessageIds } = req.body;
 
       const room = await prisma.room.findUnique({ where: { id: roomId } });
       if (!room) return reply.status(404).send({ error: 'Room not found' });
 
-      const message = await prisma.chatMessage.create({
-        data: {
+      try {
+        const prepared = await interactiveDispatchService.prepare({
           roomId,
-          sessionId: sessionId ?? null,
+          content,
+          mentionTarget,
+          preferredSessionId: sessionId,
+          selectedMessageIds,
+        });
+
+        const primarySessionId = prepared.targets.length === 1 ? prepared.targets[0].sessionId : undefined;
+        const chatMsg = await messageService.create({
+          roomId,
+          sessionId: primarySessionId,
           role: 'user',
           mentionTarget,
           content,
-          contentFormat: 'markdown',
           selectable: true,
           pinned: false,
-        },
-      });
+        });
 
-      const chatMsg = toMessageDto(message);
+        if (prepared.selectedCount > 0) {
+          const label = prepared.targets.map((target) => target.agent).join(', ');
+          await messageService.create({
+            roomId,
+            sessionId: primarySessionId,
+            role: 'handoff-summary',
+            content: `Sent ${prepared.selectedCount} selected message${prepared.selectedCount > 1 ? 's' : ''} to ${label}.`,
+            selectable: false,
+          });
+        }
 
-      roomChannel.broadcast(roomId, { type: 'message.created', data: chatMsg });
-
-      // Dispatch to orchestrator (runs in background, events stream via WS)
-      orchestrator.handleUserMessage(roomId, content, mentionTarget, sessionId).catch((err) => {
-        app.log.error({ err, roomId }, 'Orchestrator error');
-      });
-
-      return chatMsg;
+        try {
+          await interactiveDispatchService.dispatchPrepared(roomId, prepared, chatMsg.id);
+        } catch (err) {
+          const error = err instanceof Error ? err.message : String(err);
+          app.log.error({ err, roomId }, 'Interactive terminal delivery failed');
+          await messageService.create({
+            roomId,
+            sessionId: primarySessionId,
+            role: 'system',
+            content: `Failed to deliver message to interactive session: ${error}`,
+            selectable: false,
+          });
+        }
+        return chatMsg;
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        app.log.error({ err, roomId }, 'Interactive dispatch error');
+        return reply.status(400).send({ error });
+      }
     },
   );
 

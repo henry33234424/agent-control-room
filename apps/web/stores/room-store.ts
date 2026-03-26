@@ -24,6 +24,7 @@ interface RoomState {
     pendingApprovals: Approval[];
   }) => void;
   addMessage: (msg: ChatMessage) => void;
+  updateMessage: (msg: ChatMessage) => void;
   updateSession: (session: Partial<AgentSession> & { id: string }) => void;
   addApproval: (approval: Approval) => void;
   resolveApproval: (id: string) => void;
@@ -48,6 +49,11 @@ export const useRoomStore = create<RoomState>((set, get) => ({
 
   addMessage: (msg) =>
     set((state) => ({ messages: [...state.messages, msg] })),
+
+  updateMessage: (msg) =>
+    set((state) => ({
+      messages: state.messages.map((existing) => (existing.id === msg.id ? msg : existing)),
+    })),
 
   updateSession: (partial) =>
     set((state) => ({
@@ -79,6 +85,9 @@ export const useRoomStore = create<RoomState>((set, get) => ({
         break;
       case 'message.created':
         state.addMessage(event.data);
+        break;
+      case 'message.updated':
+        state.updateMessage(event.data);
         break;
       case 'run.status':
         // run.status is for tracking run state — do NOT write it into session status

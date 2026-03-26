@@ -3,11 +3,17 @@
 import { useState } from 'react';
 import { useSelectionStore } from '@/stores/selection-store';
 import { api } from '@/lib/api-client';
+import { useUIStore } from '@/stores/ui-store';
+import { useConsoleStore } from '@/stores/console-store';
 import type { AgentKind } from '@control-room/shared-types';
 
 export function HandoffBar({ roomId }: { roomId: string }) {
   const selectedIds = useSelectionStore((s) => s.selectedMessageIds);
   const clear = useSelectionStore((s) => s.clear);
+  const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
+  const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
+  const clearEvents = useConsoleStore((s) => s.clearEvents);
+  const setCurrentRunId = useConsoleStore((s) => s.setCurrentRunId);
   const [instruction, setInstruction] = useState('');
   const [sending, setSending] = useState(false);
 
@@ -17,11 +23,17 @@ export function HandoffBar({ roomId }: { roomId: string }) {
     if (sending) return;
     setSending(true);
     try {
-      await api.handoffs.create(roomId, {
-        targetAgent: target,
+      const msg = await api.messages.send(roomId, {
+        content: `@${target} ${instruction || 'Please continue based on the selected context.'}`,
+        mentionTarget: target,
         selectedMessageIds: Array.from(selectedIds),
-        userInstruction: instruction || 'Please continue based on the selected context.',
       });
+      if (msg.sessionId) {
+        setSelectedSessionId(msg.sessionId);
+        setConsoleSession(msg.sessionId);
+        clearEvents();
+        setCurrentRunId(null);
+      }
       clear();
       setInstruction('');
     } catch (err) {

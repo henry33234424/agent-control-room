@@ -5,13 +5,18 @@ import { api } from '@/lib/api-client';
 import { useUIStore } from '@/stores/ui-store';
 import { useRoomStore } from '@/stores/room-store';
 import { useConsoleStore } from '@/stores/console-store';
+import { useSelectionStore } from '@/stores/selection-store';
 import type { MentionTarget } from '@control-room/shared-types';
 
 export function MessageInput({ roomId }: { roomId: string }) {
   const selectedSessionId = useUIStore((s) => s.selectedSessionId);
+  const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
   const sessions = useRoomStore((s) => s.sessions);
   const clearEvents = useConsoleStore((s) => s.clearEvents);
+  const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
   const setCurrentRunId = useConsoleStore((s) => s.setCurrentRunId);
+  const selectedMessageIds = useSelectionStore((s) => s.selectedMessageIds);
+  const clearSelection = useSelectionStore((s) => s.clear);
   const [content, setContent] = useState('');
   const [sending, setSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -39,15 +44,19 @@ export function MessageInput({ roomId }: { roomId: string }) {
           ? selectedSession.id
           : undefined;
 
-      await api.messages.send(roomId, {
+      const msg = await api.messages.send(roomId, {
         content: trimmed,
         mentionTarget,
         sessionId: preferredSessionId,
+        selectedMessageIds: Array.from(selectedMessageIds),
       });
-      if (preferredSessionId) {
+      if (msg.sessionId) {
+        setSelectedSessionId(msg.sessionId);
+        setConsoleSession(msg.sessionId);
         clearEvents();
         setCurrentRunId(null);
       }
+      clearSelection();
       setContent('');
       textareaRef.current?.focus();
     } catch (err) {

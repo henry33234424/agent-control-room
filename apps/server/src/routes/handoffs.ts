@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { CreateHandoffRequest } from '@control-room/shared-types';
 import { handoffService } from '../services/handoff-service.js';
 import { messageService } from '../services/message-service.js';
-import { orchestrator } from '../orchestrator/room-orchestrator.js';
+import { interactiveDispatchService } from '../services/interactive-dispatch-service.js';
 import { roomChannel } from '../ws/room-channel.js';
 
 export async function handoffRoutes(app: FastifyInstance) {
@@ -35,31 +35,14 @@ export async function handoffRoutes(app: FastifyInstance) {
       // 3. Broadcast
       roomChannel.broadcast(roomId, { type: 'handoff.created', data: bundle });
 
-      // 4. Compose handoff prompt and dispatch with triggerType='handoff'
-      const handoffPrompt = [
-        '[Handoff Task]',
-        `Target: ${userInstruction}`,
-        '',
-        '[Structured Summary]',
-        `Goal: ${bundle.structuredSummary.goal}`,
-        bundle.structuredSummary.decisions.length > 0
-          ? `Decisions:\n${bundle.structuredSummary.decisions.map((d) => `- ${d}`).join('\n')}`
-          : '',
-        bundle.structuredSummary.constraints.length > 0
-          ? `Constraints:\n${bundle.structuredSummary.constraints.map((c) => `- ${c}`).join('\n')}`
-          : '',
-        '',
-        '[Selected Transcript]',
-        bundle.rawExcerpt,
-      ]
-        .filter(Boolean)
-        .join('\n');
-
-      orchestrator
-        .handleUserMessage(roomId, handoffPrompt, targetAgent, undefined, 'handoff')
-        .catch((err) => {
-          app.log.error({ err, roomId }, 'Handoff dispatch error');
-        });
+      // 4. Dispatch into the interactive target session
+      const prepared = await interactiveDispatchService.prepare({
+        roomId,
+        content: userInstruction,
+        mentionTarget: targetAgent,
+        selectedMessageIds,
+      });
+      await interactiveDispatchService.dispatchPrepared(roomId, prepared);
 
       return bundle;
     },
