@@ -145,7 +145,7 @@ export async function registerWebSocket(app: FastifyInstance) {
 
     ws.on('close', () => {
       roomChannel.unsubscribeAll(ws);
-      ptyManager.killBySocket(ws);
+      ptyManager.detachBySocket(ws);
     });
   });
 }

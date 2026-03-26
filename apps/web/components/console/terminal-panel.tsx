@@ -141,10 +141,6 @@ export function TerminalPanel() {
     // Don't restart if already active
     if (activePtySessionId === selectedSessionId) return;
 
-    if (activePtySessionId && activePtySessionId !== selectedSessionId) {
-      wsClient.send({ type: 'pty.kill', sessionId: activePtySessionId } as any);
-    }
-
     const workingDirectory =
       typeof session.metadata?.worktreePath === 'string'
         ? session.metadata.worktreePath

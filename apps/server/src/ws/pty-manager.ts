@@ -8,10 +8,12 @@ const pty: { spawn: typeof import('node-pty').spawn } = require_('node-pty');
 
 interface PtySession {
   ptyProcess: IPty;
-  ws: WebSocket;
+  ws: WebSocket | null;
   agent: 'claude' | 'codex';
   sessionId: string;
   roomId: string;
+  buffer: string;
+  detachTimer: NodeJS.Timeout | null;
 }
 
 /**
@@ -20,6 +22,8 @@ interface PtySession {
  */
 class PtyManager {
   private sessions = new Map<string, PtySession>();
+  private maxBufferChars = 200_000;
+  private detachTtlMs = 10 * 60 * 1000;
 
   /**
    * Spawn a CLI in a real PTY and wire it to the WebSocket.
@@ -35,8 +39,21 @@ class PtyManager {
     cols?: number;
     rows?: number;
   }): void {
-    // Kill existing PTY for this session if any
-    this.kill(input.sessionId);
+    this.detachBySocket(input.ws);
+
+    const existing = this.sessions.get(input.sessionId);
+    if (existing) {
+      if (existing.detachTimer) {
+        clearTimeout(existing.detachTimer);
+        existing.detachTimer = null;
+      }
+      existing.ws = input.ws;
+      existing.ptyProcess.resize(input.cols ?? 120, input.rows ?? 40);
+      if (existing.buffer && input.ws.readyState === 1) {
+        input.ws.send(JSON.stringify({ type: 'pty.output', sessionId: input.sessionId, data: existing.buffer }));
+      }
+      return;
+    }
 
     const ptyProcess = pty.spawn(input.command, input.args, {
       name: 'xterm-256color',
@@ -52,24 +69,30 @@ class PtyManager {
       agent: input.agent,
       sessionId: input.sessionId,
       roomId: input.roomId,
+      buffer: '',
+      detachTimer: null,
     };
 
     this.sessions.set(input.sessionId, session);
 
     // PTY → WebSocket (terminal output to browser)
     ptyProcess.onData((data: string) => {
-      if (input.ws.readyState === 1) {
-        input.ws.send(JSON.stringify({ type: 'pty.output', sessionId: input.sessionId, data }));
+      session.buffer = this.appendBuffer(session.buffer, data);
+      if (session.ws?.readyState === 1) {
+        session.ws.send(JSON.stringify({ type: 'pty.output', sessionId: input.sessionId, data }));
       }
     });
 
     ptyProcess.onExit(({ exitCode }) => {
-      if (input.ws.readyState === 1) {
-        input.ws.send(JSON.stringify({
+      if (session.ws?.readyState === 1) {
+        session.ws.send(JSON.stringify({
           type: 'pty.exit',
           sessionId: input.sessionId,
           exitCode,
         }));
+      }
+      if (session.detachTimer) {
+        clearTimeout(session.detachTimer);
       }
       this.sessions.delete(input.sessionId);
     });
@@ -115,6 +138,9 @@ class PtyManager {
   kill(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session) {
+      if (session.detachTimer) {
+        clearTimeout(session.detachTimer);
+      }
       session.ptyProcess.kill();
       this.sessions.delete(sessionId);
     }
@@ -123,6 +149,9 @@ class PtyManager {
   killForSocket(ws: WebSocket, sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session && session.ws === ws) {
+      if (session.detachTimer) {
+        clearTimeout(session.detachTimer);
+      }
       session.ptyProcess.kill();
       this.sessions.delete(sessionId);
     }
@@ -141,16 +170,35 @@ class PtyManager {
     return this.sessions.has(sessionId);
   }
 
-  /**
-   * Kill all PTY sessions bound to a specific WebSocket (on disconnect).
-   */
-  killBySocket(ws: WebSocket): void {
-    for (const [id, session] of this.sessions) {
+  detachBySocket(ws: WebSocket): void {
+    for (const session of this.sessions.values()) {
       if (session.ws === ws) {
-        session.ptyProcess.kill();
-        this.sessions.delete(id);
+        session.ws = null;
+        this.scheduleDetachCleanup(session);
       }
     }
+  }
+
+  private appendBuffer(buffer: string, data: string): string {
+    const next = buffer + data;
+    if (next.length <= this.maxBufferChars) {
+      return next;
+    }
+    return next.slice(next.length - this.maxBufferChars);
+  }
+
+  private scheduleDetachCleanup(session: PtySession): void {
+    if (session.detachTimer) {
+      clearTimeout(session.detachTimer);
+    }
+    session.detachTimer = setTimeout(() => {
+      const current = this.sessions.get(session.sessionId);
+      if (!current || current.ws) {
+        return;
+      }
+      current.ptyProcess.kill();
+      this.sessions.delete(session.sessionId);
+    }, this.detachTtlMs);
   }
 }
 
