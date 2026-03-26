@@ -26,7 +26,7 @@ export function MessageList() {
   const selectedIds = useSelectionStore((s) => s.selectedMessageIds);
   const toggle = useSelectionStore((s) => s.toggle);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const streamingPreview = getStreamingPreview(consoleEvents);
+  const streamingPreview = getStreamingPreview(messages, consoleEvents);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -89,12 +89,14 @@ export function MessageList() {
 }
 
 function getStreamingPreview(
+  messages: Array<{ role: string }>,
   events: RuntimeEvent[],
 ): { agent: RuntimeEvent['agent']; text: string } | null {
-  const hasTerminalEvent = events.some(
-    (event) => event.kind === 'run.completed' || event.kind === 'run.failed',
-  );
-  if (hasTerminalEvent) return null;
+  const latestMessage = messages[messages.length - 1];
+  if (latestMessage && latestMessage.role !== 'user') return null;
+
+  const hasFailedEvent = events.some((event) => event.kind === 'run.failed');
+  if (hasFailedEvent) return null;
 
   const deltaEvents = events.filter((event) => event.kind === 'message.delta');
   if (deltaEvents.length === 0) return null;

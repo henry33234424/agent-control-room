@@ -34,6 +34,7 @@ export class CodexAdapter implements AgentDriver {
   private codexProcess = new CodexProcess();
   private activeRuns = new Map<string, RunContext>(); // threadId → context
   private pendingCompletions = new Map<string, PendingCompletion>(); // threadId → pending completion
+  private streamingBuffers = new Map<string, string>(); // threadId → accumulated delta text
 
   constructor() {
     this.codexProcess.on('stderr', (text: string) => {
@@ -69,11 +70,18 @@ export class CodexAdapter implements AgentDriver {
         await eventService.emitAndBroadcast(event);
       }
 
+      if (method === 'item/agentMessage/delta') {
+        this.appendStreamingDelta(threadId, extractStreamingDelta(params));
+      }
+
       const pending = this.pendingCompletions.get(threadId);
       if (!pending) return;
 
       if (pending.kind === 'run' && method === 'turn/completed') {
-        this.resolvePendingCompletion(threadId, extractTurnText(params));
+        this.resolvePendingCompletion(
+          threadId,
+          extractTurnText(params) || this.getStreamingBuffer(threadId),
+        );
         return;
       }
 
@@ -160,7 +168,7 @@ export class CodexAdapter implements AgentDriver {
         const immediateStatus = getNestedString(turnResult, ['turn', 'status']);
         const resultText =
           immediateStatus === 'completed'
-            ? extractTurnText(turnResult)
+            ? extractTurnText(turnResult) || this.getStreamingBuffer(threadId)
             : await completionPromise;
 
         await runManager.transitionRun(runId, 'summarizing');
@@ -181,6 +189,7 @@ export class CodexAdapter implements AgentDriver {
         // Unregister when run ends (success or failure)
         this.activeRuns.delete(threadId);
         this.clearPendingCompletion(threadId);
+        this.clearStreamingBuffer(threadId);
       }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -299,6 +308,7 @@ export class CodexAdapter implements AgentDriver {
         if (threadId) {
           this.activeRuns.delete(threadId);
           this.clearPendingCompletion(threadId);
+          this.clearStreamingBuffer(threadId);
         }
       }
     } catch (err) {
@@ -369,11 +379,25 @@ export class CodexAdapter implements AgentDriver {
     this.pendingCompletions.delete(threadId);
   }
 
+  private appendStreamingDelta(threadId: string, delta: string): void {
+    if (!delta) return;
+    this.streamingBuffers.set(threadId, `${this.streamingBuffers.get(threadId) ?? ''}${delta}`);
+  }
+
+  private getStreamingBuffer(threadId: string): string {
+    return this.streamingBuffers.get(threadId) ?? '';
+  }
+
+  private clearStreamingBuffer(threadId: string): void {
+    this.streamingBuffers.delete(threadId);
+  }
+
   private failAllPendingCompletions(reason: string): void {
     for (const [threadId, pending] of this.pendingCompletions) {
       clearTimeout(pending.timer);
       pending.reject(new Error(reason));
       this.pendingCompletions.delete(threadId);
+      this.streamingBuffers.delete(threadId);
     }
   }
 }
@@ -422,6 +446,16 @@ function extractAgentMessageText(message: Record<string, unknown> | undefined): 
   }
 
   return '';
+}
+
+function extractStreamingDelta(params: Record<string, unknown>): string {
+  return (
+    (params.delta as string | undefined) ||
+    (params.content as string | undefined) ||
+    getNestedString(params, ['item', 'delta']) ||
+    getNestedString(params, ['item', 'text']) ||
+    ''
+  );
 }
 
 function extractCodexError(params: Record<string, unknown>): string {

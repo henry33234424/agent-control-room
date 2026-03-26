@@ -14,8 +14,8 @@ import { handoffRoutes } from './routes/handoffs.js';
 import { reviewRoutes } from './routes/reviews.js';
 import { registerWebSocket } from './ws/handler.js';
 import { orchestrator } from './orchestrator/room-orchestrator.js';
-import { ClaudeAdapter } from './adapters/claude/claude-adapter.js';
-import { CodexAdapter } from './adapters/codex/codex-adapter.js';
+import { ClaudeCLIAdapter } from './adapters/cli/claude-cli-adapter.js';
+import { CodexCLIAdapter } from './adapters/cli/codex-cli-adapter.js';
 
 async function main() {
   const app = Fastify({
@@ -47,9 +47,19 @@ async function main() {
   // WebSocket
   await registerWebSocket(app);
 
-  // Register agent adapters
-  orchestrator.registerDriver('claude', new ClaudeAdapter());
-  orchestrator.registerDriver('codex', new CodexAdapter());
+  // Register agent adapters (CLI mode by default, SDK mode via ADAPTER_MODE=sdk)
+  if (config.adapterMode === 'sdk') {
+    // Dynamic import to avoid loading SDK deps when not needed
+    const { ClaudeAdapter } = await import('./adapters/claude/claude-sdk-adapter.js');
+    const { CodexAdapter } = await import('./adapters/codex/codex-rpc-adapter.js');
+    orchestrator.registerDriver('claude', new ClaudeAdapter());
+    orchestrator.registerDriver('codex', new CodexAdapter());
+    app.log.info('Using SDK/RPC adapters');
+  } else {
+    orchestrator.registerDriver('claude', new ClaudeCLIAdapter());
+    orchestrator.registerDriver('codex', new CodexCLIAdapter());
+    app.log.info('Using CLI adapters');
+  }
 
   // Health check
   app.get('/api/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
