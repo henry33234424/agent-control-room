@@ -18,6 +18,7 @@ interface ReplyTracking {
   text: string;
   lastFlushedText: string;
   pendingEcho: string;
+  pendingLine: string;
   flushTimer: NodeJS.Timeout | null;
   flushing: boolean;
   needsFlush: boolean;
@@ -284,7 +285,12 @@ class PtyManager {
 
     if (!suppressed.text) return;
 
-    tracking.text += suppressed.text;
+    const extracted = extractTranscriptDelta(tracking.pendingLine, suppressed.text);
+    tracking.pendingLine = extracted.pendingLine;
+
+    if (!extracted.text) return;
+
+    tracking.text += extracted.text;
     this.scheduleReplyFlush(session);
   }
 
@@ -358,6 +364,12 @@ class PtyManager {
       tracking.flushTimer = null;
     }
 
+    const tail = flushPendingTranscriptLine(tracking.pendingLine);
+    if (tail) {
+      tracking.text += tail;
+    }
+    tracking.pendingLine = '';
+
     if (session.replyTracking !== tracking) {
       return;
     }
@@ -384,6 +396,7 @@ class PtyManager {
       text: '',
       lastFlushedText: '',
       pendingEcho: input.pendingEcho,
+      pendingLine: '',
       flushTimer: null,
       flushing: false,
       needsFlush: false,
@@ -391,11 +404,13 @@ class PtyManager {
   }
 }
 
-function sanitizeTerminalText(data: string): string {
+export function sanitizeTerminalText(data: string): string {
   return data
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1bP[\s\S]*?\x1b\\/g, '')
     .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+    .replace(/\[\d+(;\d+)*m/g, '')
     .replace(/\u0007/g, '')
-    .replace(/\r/g, '')
     .replace(/\u001b>/g, '')
     .replace(/\u001b=/g, '');
 }
@@ -473,6 +488,108 @@ export function consumeTerminalInput(
   }
 
   return { nextBuffer, submittedLines };
+}
+
+export function extractTranscriptDelta(
+  pendingLine: string,
+  data: string,
+): { text: string; pendingLine: string } {
+  let currentLine = pendingLine;
+  const accepted: string[] = [];
+
+  for (let i = 0; i < data.length; i += 1) {
+    const char = data[i];
+
+    if (char === '\r') {
+      if (data[i + 1] === '\n') {
+        const line = filterTranscriptLine(currentLine);
+        if (line !== null) accepted.push(line);
+        currentLine = '';
+        i += 1;
+      } else {
+        currentLine = '';
+      }
+      continue;
+    }
+
+    if (char === '\n') {
+      const line = filterTranscriptLine(currentLine);
+      if (line !== null) accepted.push(line);
+      currentLine = '';
+      continue;
+    }
+
+    currentLine += char;
+  }
+
+  return {
+    text: joinTranscriptLines(accepted),
+    pendingLine: currentLine,
+  };
+}
+
+function flushPendingTranscriptLine(pendingLine: string): string {
+  const line = filterTranscriptLine(pendingLine);
+  return line === null ? '' : joinTranscriptLines([line]);
+}
+
+function joinTranscriptLines(lines: string[]): string {
+  if (lines.length === 0) return '';
+
+  const compacted: string[] = [];
+  for (const line of lines) {
+    if (line === '') {
+      if (compacted.length === 0 || compacted[compacted.length - 1] === '') continue;
+      compacted.push(line);
+      continue;
+    }
+    compacted.push(line);
+  }
+
+  while (compacted.length > 0 && compacted[compacted.length - 1] === '') {
+    compacted.pop();
+  }
+
+  return compacted.length > 0 ? `${compacted.join('\n')}\n` : '';
+}
+
+function filterTranscriptLine(line: string): string | null {
+  const trimmedRight = line.replace(/[ \t]+$/g, '');
+  const trimmed = trimmedRight.trim();
+
+  if (!trimmed) {
+    return '';
+  }
+
+  let normalized = trimmedRight
+    .replace(/^❯\s*/u, '')
+    .replace(/\s*[✻✽✶✳◐◑◒◓◴◵◶◷⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏].*$/u, '')
+    .replace(/\s{2,}/g, ' ')
+    .trimEnd();
+
+  if (!normalized.trim()) {
+    return null;
+  }
+
+  const candidate = normalized.trim();
+
+  if (
+    /Claude Code/i.test(candidate) ||
+    /Photosynthesizing/i.test(candidate) ||
+    /esc\s*to\s*interrupt/i.test(candidate) ||
+    /\/effort/i.test(candidate) ||
+    /^0;/.test(candidate) ||
+    /^[\u2500-\u257f\s]+$/u.test(candidate) ||
+    /^[✻✽✶✳◐◑◒◓◴◵◶◷⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\s]+$/u.test(candidate)
+  ) {
+    return null;
+  }
+
+  if (/^[a-z]{1,12}…?$/u.test(candidate)) {
+    return null;
+  }
+
+  return normalized;
 }
 
 function skipEscapeSequence(data: string, index: number): number {

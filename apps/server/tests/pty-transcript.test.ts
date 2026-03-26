@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { consumeTerminalInput } from '../src/ws/pty-manager.js';
+import { consumeTerminalInput, extractTranscriptDelta, sanitizeTerminalText } from '../src/ws/pty-manager.js';
 
 describe('consumeTerminalInput', () => {
   it('collects plain text until enter and submits one line', () => {
@@ -37,6 +37,39 @@ describe('consumeTerminalInput', () => {
     expect(consumeTerminalInput('', '\r')).toEqual({
       nextBuffer: '',
       submittedLines: [],
+    });
+  });
+});
+
+describe('extractTranscriptDelta', () => {
+  it('keeps only meaningful assistant text from Claude TUI redraw output', () => {
+    const noisy = [
+      '\x1b]0;⠂ Claude Code\x07',
+      '❯ 嗨！有什么我可以帮你的吗？    ✽ Photosynthesizing…\r\n',
+      '────────────────────────────────────\r\n',
+      'esc to interrupt ◐ medium · /effort\r\n',
+      '[38;2;153;153;153m\r\n',
+      'tosizi\r\n',
+      'zg\r\n',
+    ].join('');
+
+    expect(extractTranscriptDelta('', sanitizeTerminalText(noisy))).toEqual({
+      text: '嗨！有什么我可以帮你的吗？\n',
+      pendingLine: '',
+    });
+  });
+
+  it('applies carriage-return overwrite semantics before transcript output', () => {
+    expect(extractTranscriptDelta('', 'loading\rfinal answer\r\n')).toEqual({
+      text: 'final answer\n',
+      pendingLine: '',
+    });
+  });
+
+  it('holds partial lines until the line is completed', () => {
+    expect(extractTranscriptDelta('', 'partial')).toEqual({
+      text: '',
+      pendingLine: 'partial',
     });
   });
 });

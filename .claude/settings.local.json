@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm --filter @control-room/server test)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}
