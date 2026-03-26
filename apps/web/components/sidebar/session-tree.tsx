@@ -1,10 +1,12 @@
 'use client';
 
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useRoomStore } from '@/stores/room-store';
 import { useUIStore } from '@/stores/ui-store';
 import { useConsoleStore } from '@/stores/console-store';
 import { api } from '@/lib/api-client';
-import type { AgentKind } from '@control-room/shared-types';
+import type { AgentKind, Room } from '@control-room/shared-types';
 
 const STATUS_COLORS: Record<string, string> = {
   idle: 'bg-gray-400',
@@ -15,6 +17,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export function SessionTree() {
+  const router = useRouter();
   const room = useRoomStore((s) => s.room);
   const sessions = useRoomStore((s) => s.sessions);
   const selectedId = useUIStore((s) => s.selectedSessionId);
@@ -22,6 +25,25 @@ export function SessionTree() {
   const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
   const setCurrentRunId = useConsoleStore((s) => s.setCurrentRunId);
   const loadEvents = useConsoleStore((s) => s.loadEvents);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [expandedRooms, setExpandedRooms] = useState<Set<string>>(new Set());
+  const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set(['claude', 'codex']));
+
+  useEffect(() => {
+    api.rooms.list().then(setRooms).catch((err) => {
+      console.error('Failed to load projects:', err);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!room?.id) return;
+    setExpandedRooms((prev) => {
+      if (prev.has(room.id)) return prev;
+      const next = new Set(prev);
+      next.add(room.id);
+      return next;
+    });
+  }, [room?.id]);
 
   const handleSelect = async (id: string) => {
     setSelectedId(id);
@@ -48,29 +70,91 @@ export function SessionTree() {
     }
   };
 
-  const claudeSessions = sessions.filter((s) => s.agent === 'claude');
-  const codexSessions = sessions.filter((s) => s.agent === 'codex');
+  const currentRoomId = room?.id ?? null;
+  const currentRoomSessions = useMemo(
+    () => ({
+      claude: sessions.filter((s) => s.agent === 'claude'),
+      codex: sessions.filter((s) => s.agent === 'codex'),
+    }),
+    [sessions],
+  );
+
+  const toggleRoom = (roomId: string) => {
+    if (roomId !== currentRoomId) {
+      router.push(`/rooms/${roomId}`);
+      return;
+    }
+
+    setExpandedRooms((prev) => {
+      const next = new Set(prev);
+      if (next.has(roomId)) next.delete(roomId);
+      else next.add(roomId);
+      return next;
+    });
+  };
+
+  const toggleAgent = (agent: AgentKind) => {
+    setExpandedAgents((prev) => {
+      const next = new Set(prev);
+      if (next.has(agent)) next.delete(agent);
+      else next.add(agent);
+      return next;
+    });
+  };
 
   return (
     <div className="flex flex-col h-full">
       <div className="p-3 border-b border-gray-700">
-        <h2 className="text-sm font-bold text-gray-200 uppercase tracking-wider">Sessions</h2>
+        <h2 className="text-sm font-bold text-gray-200 uppercase tracking-wider">Projects</h2>
       </div>
-      <div className="flex-1 overflow-y-auto p-2 space-y-3">
-        <AgentGroup
-          agent="claude"
-          label="Claude"
-          sessions={claudeSessions}
-          selectedId={selectedId}
-          onSelect={handleSelect}
-        />
-        <AgentGroup
-          agent="codex"
-          label="Codex"
-          sessions={codexSessions}
-          selectedId={selectedId}
-          onSelect={handleSelect}
-        />
+      <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+        {rooms.map((project) => {
+          const isCurrent = project.id === currentRoomId;
+          const isExpanded = expandedRooms.has(project.id);
+
+          return (
+            <div key={project.id} className="rounded-lg border border-gray-800/80 bg-gray-950/40 overflow-hidden">
+              <button
+                onClick={() => toggleRoom(project.id)}
+                className={`w-full flex items-center gap-2 px-2.5 py-2 text-left transition-colors ${
+                  isCurrent ? 'bg-gray-800/90 text-white' : 'text-gray-300 hover:bg-gray-900'
+                }`}
+              >
+                <span className="text-[11px] text-gray-500">{isExpanded && isCurrent ? 'v' : '>'}</span>
+                <span className="text-[10px] uppercase tracking-wide text-gray-500">dir</span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{project.name}</div>
+                  <div className="truncate text-[10px] text-gray-500">
+                    {project.repoPath.split('/').filter(Boolean).pop()}
+                  </div>
+                </div>
+              </button>
+
+              {isCurrent && isExpanded && (
+                <div className="border-t border-gray-800 bg-gray-950/60">
+                  <AgentGroup
+                    agent="claude"
+                    label="Claude"
+                    sessions={currentRoomSessions.claude}
+                    selectedId={selectedId}
+                    expanded={expandedAgents.has('claude')}
+                    onToggle={() => toggleAgent('claude')}
+                    onSelect={handleSelect}
+                  />
+                  <AgentGroup
+                    agent="codex"
+                    label="Codex"
+                    sessions={currentRoomSessions.codex}
+                    selectedId={selectedId}
+                    expanded={expandedAgents.has('codex')}
+                    onToggle={() => toggleAgent('codex')}
+                    onSelect={handleSelect}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -81,6 +165,8 @@ function AgentGroup({
   label,
   sessions,
   selectedId,
+  expanded,
+  onToggle,
   onSelect,
 }: {
   agent: AgentKind;
@@ -94,39 +180,55 @@ function AgentGroup({
     metadata?: Record<string, unknown>;
   }>;
   selectedId: string | null;
+  expanded: boolean;
+  onToggle: () => void;
   onSelect: (id: string) => void;
 }) {
   return (
-    <div>
-      <div className="text-xs font-semibold text-gray-400 uppercase px-2 mb-1">{label}</div>
-      {sessions.length === 0 ? (
-        <div className="text-xs text-gray-500 px-2">No sessions</div>
-      ) : (
-        sessions.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => onSelect(s.id)}
-            className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center gap-2 transition-colors ${
-              selectedId === s.id
-                ? 'bg-gray-700 text-white'
-                : 'text-gray-300 hover:bg-gray-800'
-            }`}
-          >
-            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_COLORS[s.status] ?? 'bg-gray-400'}`} />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate">{s.name}</span>
-                <span className="text-[10px] uppercase text-gray-500 flex-shrink-0">{s.status}</span>
-              </div>
-              <div className="text-[10px] text-gray-500 truncate">
-                {formatSessionMeta(s.metadata, s.mode)}
-              </div>
-              <div className="text-[10px] text-gray-600">
-                {new Date(s.updatedAt).toLocaleTimeString('en-US', { hour12: false })}
-              </div>
-            </div>
-          </button>
-        ))
+    <div className="px-1 py-1">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 hover:bg-gray-900 transition-colors"
+      >
+        <span className="text-[10px] text-gray-600">{expanded ? 'v' : '>'}</span>
+        <span className="text-[10px] uppercase tracking-wide text-gray-600">dir</span>
+        <span>{label}</span>
+        <span className="ml-auto text-[10px] text-gray-600">{sessions.length}</span>
+      </button>
+
+      {expanded && (
+        <div className="mt-1 space-y-1 border-l border-gray-800 ml-3 pl-2">
+          {sessions.length === 0 ? (
+            <div className="text-xs text-gray-500 px-2 py-1">No sessions</div>
+          ) : (
+            sessions.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => onSelect(s.id)}
+                className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center gap-2 transition-colors ${
+                  selectedId === s.id
+                    ? 'bg-gray-700 text-white'
+                    : 'text-gray-300 hover:bg-gray-800'
+                }`}
+              >
+                <span className="text-gray-600">└</span>
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_COLORS[s.status] ?? 'bg-gray-400'}`} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate">{s.name}</span>
+                    <span className="text-[10px] uppercase text-gray-500 flex-shrink-0">{s.status}</span>
+                  </div>
+                  <div className="text-[10px] text-gray-500 truncate">
+                    {formatSessionMeta(s.metadata, s.mode)}
+                  </div>
+                  <div className="text-[10px] text-gray-600">
+                    {new Date(s.updatedAt).toLocaleTimeString('en-US', { hour12: false })}
+                  </div>
+                </div>
+              </button>
+            ))
+          )}
+        </div>
       )}
     </div>
   );
