@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { api } from '@/lib/api-client';
 import { wsClient } from '@/lib/ws-client';
 import { useRoomStore } from '@/stores/room-store';
 import { useUIStore } from '@/stores/ui-store';
@@ -119,6 +120,9 @@ export function TerminalPanel() {
         }
       }
       if (event.type === 'pty.exit' && event.sessionId === activePtyRef.current) {
+        if (event.error) {
+          termInstanceRef.current?.writeln(`\r\n\x1b[31m[${event.error}]\x1b[0m`);
+        }
         termInstanceRef.current?.writeln('\r\n\x1b[33m[Process exited]\x1b[0m');
         setActivePtySessionId(null);
       }
@@ -137,12 +141,21 @@ export function TerminalPanel() {
     // Don't restart if already active
     if (activePtySessionId === selectedSessionId) return;
 
+    if (activePtySessionId && activePtySessionId !== selectedSessionId) {
+      wsClient.send({ type: 'pty.kill', sessionId: activePtySessionId } as any);
+    }
+
+    const workingDirectory =
+      typeof session.metadata?.worktreePath === 'string'
+        ? session.metadata.worktreePath
+        : room.repoPath;
+
     // Clear terminal
     const term = termInstanceRef.current;
     if (term) {
       term.clear();
       term.writeln(`\x1b[36m── Starting ${session.agent === 'claude' ? 'Claude' : 'Codex'} (${session.name}) ──\x1b[0m`);
-      term.writeln(`\x1b[90mWorking directory: ${room.repoPath}\x1b[0m`);
+      term.writeln(`\x1b[90mWorking directory: ${workingDirectory}\x1b[0m`);
       term.writeln('');
     }
 
@@ -152,7 +165,6 @@ export function TerminalPanel() {
       sessionId: selectedSessionId,
       roomId: room.id,
       agent: session.agent,
-      cwd: room.repoPath,
       cols: term?.cols ?? 120,
       rows: term?.rows ?? 40,
     } as any);
@@ -168,39 +180,23 @@ export function TerminalPanel() {
 
     // Create a real session via API
     try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3002'}/api/rooms/${room.id}/sessions`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agent, name: `${agent}-${Date.now()}` }),
-        },
-      );
-      const session = await res.json();
-      const sessionId = session.id;
+      const session = await api.sessions.create(room.id, {
+        agent,
+        name: `${agent}-${Date.now()}`,
+      });
 
       if (term) {
         term.clear();
-        term.writeln(`\x1b[36m── Starting ${agent === 'claude' ? 'Claude' : 'Codex'} (${session.name}) ──\x1b[0m`);
-        term.writeln(`\x1b[90mWorking directory: ${room.repoPath}\x1b[0m`);
+        term.writeln(`\x1b[36m── Creating ${agent === 'claude' ? 'Claude' : 'Codex'} session (${session.name}) ──\x1b[0m`);
+        term.writeln('\x1b[90mWaiting for terminal to attach…\x1b[0m');
         term.writeln('');
       }
 
-      setSelectedSessionId(sessionId);
-
-      wsClient.send({
-        type: 'pty.start',
-        sessionId,
-        roomId: room.id,
-        agent,
-        cols: term?.cols ?? 120,
-        rows: term?.rows ?? 40,
-      } as any);
-
-      setActivePtySessionId(sessionId);
+      useRoomStore.getState().handleWsEvent({ type: 'session.updated', data: session });
+      setSelectedSessionId(session.id);
     } catch (err) {
       if (term) {
-        term.writeln(`\x1b[31mFailed to create session: ${err}\x1b[0m`);
+        term.writeln(`\x1b[31mFailed to create session: ${err instanceof Error ? err.message : String(err)}\x1b[0m`);
       }
     }
   };

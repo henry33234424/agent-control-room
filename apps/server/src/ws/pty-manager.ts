@@ -85,6 +85,13 @@ class PtyManager {
     }
   }
 
+  writeForSocket(ws: WebSocket, sessionId: string, data: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session && session.ws === ws) {
+      session.ptyProcess.write(data);
+    }
+  }
+
   /**
    * Resize the PTY terminal.
    */
@@ -95,12 +102,27 @@ class PtyManager {
     }
   }
 
+  resizeForSocket(ws: WebSocket, sessionId: string, cols: number, rows: number): void {
+    const session = this.sessions.get(sessionId);
+    if (session && session.ws === ws) {
+      session.ptyProcess.resize(cols, rows);
+    }
+  }
+
   /**
    * Kill a PTY session.
    */
   kill(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session) {
+      session.ptyProcess.kill();
+      this.sessions.delete(sessionId);
+    }
+  }
+
+  killForSocket(ws: WebSocket, sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session && session.ws === ws) {
       session.ptyProcess.kill();
       this.sessions.delete(sessionId);
     }

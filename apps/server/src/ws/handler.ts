@@ -4,6 +4,7 @@ import { roomChannel } from './room-channel.js';
 import { prisma } from '../db.js';
 import { toRoomDto, toSessionDto, toMessageDto, toPinDto } from '../lib/dto.js';
 import { approvalService } from '../services/approval-service.js';
+import { sessionService } from '../services/session-service.js';
 import { ptyManager } from './pty-manager.js';
 import { config } from '../config.js';
 
@@ -20,59 +21,65 @@ export async function registerWebSocket(app: FastifyInstance) {
         if (msg.type === 'pty.start') {
           const { sessionId, roomId, agent, cols, rows } = msg;
 
-          // Validate room exists and get its repo path
-          const room = await prisma.room.findUnique({ where: { id: roomId } });
-          if (!room) {
-            ws.send(JSON.stringify({ type: 'pty.exit', sessionId, exitCode: 1, error: 'Room not found' }));
+          try {
+            const ctx = await sessionService.resolveInteractiveContext(sessionId);
+            if (ctx.roomId !== roomId) {
+              ws.send(JSON.stringify({ type: 'pty.exit', sessionId, exitCode: 1, error: 'Session does not belong to room' }));
+              return;
+            }
+            if (ctx.agent !== agent) {
+              ws.send(JSON.stringify({ type: 'pty.exit', sessionId, exitCode: 1, error: 'Session agent mismatch' }));
+              return;
+            }
+
+            let command: string;
+            let args: string[];
+
+            if (ctx.agent === 'claude') {
+              command = 'claude';
+              args = [];
+              if (config.claudeModel) args.push('--model', config.claudeModel);
+              if (ctx.vendorSessionId) args.push('-r', ctx.vendorSessionId);
+            } else {
+              command = 'codex';
+              args = ['-C', ctx.cwd];
+              if (config.codexModel) args.push('-m', config.codexModel);
+              if (ctx.vendorSessionId) {
+                args.push('resume', ctx.vendorSessionId);
+              }
+            }
+
+            ptyManager.start({
+              sessionId,
+              roomId: ctx.roomId,
+              agent: ctx.agent,
+              command,
+              args,
+              cwd: ctx.cwd,
+              ws,
+              cols,
+              rows,
+            });
+          } catch (err) {
+            const error = err instanceof Error ? err.message : 'Failed to start terminal session';
+            ws.send(JSON.stringify({ type: 'pty.exit', sessionId, exitCode: 1, error }));
             return;
           }
-
-          // Use room's repo path as cwd (never trust client-supplied cwd)
-          const safeCwd = room.repoPath;
-
-          // Determine command and args
-          let command: string;
-          let args: string[];
-
-          if (agent === 'claude') {
-            command = 'claude';
-            args = [];
-            if (config.claudeModel) args.push('--model', config.claudeModel);
-          } else if (agent === 'codex') {
-            command = 'codex';
-            args = [];
-            if (config.codexModel) args.push('-m', config.codexModel);
-          } else {
-            ws.send(JSON.stringify({ type: 'pty.exit', sessionId, exitCode: 1, error: 'Unknown agent' }));
-            return;
-          }
-
-          ptyManager.start({
-            sessionId,
-            roomId,
-            agent,
-            command,
-            args,
-            cwd: safeCwd,
-            ws,
-            cols,
-            rows,
-          });
           return;
         }
 
         if (msg.type === 'pty.input') {
-          ptyManager.write(msg.sessionId, msg.data);
+          ptyManager.writeForSocket(ws, msg.sessionId, msg.data);
           return;
         }
 
         if (msg.type === 'pty.resize') {
-          ptyManager.resize(msg.sessionId, msg.cols, msg.rows);
+          ptyManager.resizeForSocket(ws, msg.sessionId, msg.cols, msg.rows);
           return;
         }
 
         if (msg.type === 'pty.kill') {
-          ptyManager.kill(msg.sessionId);
+          ptyManager.killForSocket(ws, msg.sessionId);
           return;
         }
 

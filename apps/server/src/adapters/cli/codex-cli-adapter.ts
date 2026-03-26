@@ -12,7 +12,7 @@ export class CodexCLIAdapter implements AgentDriver {
   agent = 'codex' as const;
 
   async run(input: RunInput): Promise<void> {
-    const { roomId, sessionId, runId, prompt, workingDirectory, worktreeId } = input;
+    const { roomId, sessionId, runId, vendorSessionId, prompt, workingDirectory, worktreeId } = input;
 
     await eventService.emitAndBroadcast({
       id: randomUUID(),
@@ -28,18 +28,7 @@ export class CodexCLIAdapter implements AgentDriver {
 
     const ctx: CodexCLIContext = { roomId, sessionId, runId, worktreeId };
 
-    const args = [
-      'exec',
-      '--json',
-      '--full-auto',
-      '-C', workingDirectory,
-    ];
-
-    if (config.codexModel) {
-      args.push('-m', config.codexModel);
-    }
-
-    args.push(prompt);
+    const args = buildRunArgs(workingDirectory, prompt, vendorSessionId);
 
     await this.runCLI(args, ctx, input);
   }
@@ -61,12 +50,7 @@ export class CodexCLIAdapter implements AgentDriver {
 
     const ctx: CodexCLIContext = { roomId, sessionId, runId, worktreeId };
 
-    const args = [
-      'exec', 'review',
-      '--json',
-      '--full-auto',
-      '-C', workingDirectory,
-    ];
+    const args = buildReviewArgs(workingDirectory, input.target, input.customRef);
 
     await this.runCLI(args, ctx, input);
   }
@@ -79,8 +63,9 @@ export class CodexCLIAdapter implements AgentDriver {
     const { roomId, sessionId, runId } = input;
 
     return new Promise<void>((resolve) => {
-      let resultText = '';
-      let hasCompleted = false;
+      let streamedText = '';
+      let finalResultText = '';
+      let extractedSessionId: string | undefined;
 
       const runner = new CLIRunner();
 
@@ -93,16 +78,13 @@ export class CodexCLIAdapter implements AgentDriver {
 
           for (const event of parsed.events) {
             await eventService.emitAndBroadcast(event);
+            if (event.kind === 'message.delta' && event.text) {
+              streamedText += event.text;
+            }
           }
 
-          // Accumulate result text (don't overwrite)
-          if (parsed.resultText) {
-            resultText += (resultText ? '\n' : '') + parsed.resultText;
-          }
-          // Check if we got a run.completed event
-          if (parsed.events.some((e) => e.kind === 'run.completed')) {
-            hasCompleted = true;
-          }
+          if (parsed.sessionId) extractedSessionId = parsed.sessionId;
+          if (parsed.resultText) finalResultText = parsed.resultText;
         },
 
         onStderrLine: async (line) => {
@@ -122,7 +104,12 @@ export class CodexCLIAdapter implements AgentDriver {
 
         onExit: async (code) => {
           try {
-            if (code === 0 || (code === null && hasCompleted)) {
+            if (extractedSessionId) {
+              await sessionService.setVendorSessionId(sessionId, extractedSessionId);
+            }
+
+            if (code === 0) {
+              const resultText = finalResultText || streamedText;
               await runManager.transitionRun(runId, 'summarizing');
               await runManager.setResult(runId, resultText);
               await runManager.transitionRun(runId, 'completed');
@@ -171,4 +158,69 @@ export class CodexCLIAdapter implements AgentDriver {
       });
     });
   }
+}
+
+function buildRunArgs(
+  workingDirectory: string,
+  prompt: string,
+  vendorSessionId?: string,
+): string[] {
+  const args = ['exec', '-C', workingDirectory];
+
+  if (vendorSessionId) {
+    args.push('resume', '--json', '--full-auto');
+    if (config.codexModel) {
+      args.push('-m', config.codexModel);
+    }
+    args.push(vendorSessionId, prompt);
+    return args;
+  }
+
+  args.push('--json', '--full-auto');
+  if (config.codexModel) {
+    args.push('-m', config.codexModel);
+  }
+  args.push(prompt);
+  return args;
+}
+
+function buildReviewArgs(
+  workingDirectory: string,
+  target: ReviewInput['target'],
+  customRef?: string,
+): string[] {
+  const args = ['exec', '-C', workingDirectory, 'review', '--json', '--full-auto'];
+
+  if (config.codexModel) {
+    args.push('-m', config.codexModel);
+  }
+
+  switch (target) {
+    case 'uncommittedChanges':
+      args.push('--uncommitted');
+      break;
+    case 'baseBranch':
+      if (customRef) {
+        args.push('--base', customRef);
+      }
+      break;
+    case 'commit':
+      if (!customRef) {
+        throw new Error('Review target "commit" requires customRef');
+      }
+      args.push('--commit', customRef);
+      break;
+    case 'custom':
+      if (!customRef) {
+        throw new Error('Review target "custom" requires customRef');
+      }
+      if (/^[0-9a-f]{7,40}$/i.test(customRef)) {
+        args.push('--commit', customRef);
+      } else {
+        args.push('--base', customRef);
+      }
+      break;
+  }
+
+  return args;
 }

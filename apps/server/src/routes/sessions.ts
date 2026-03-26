@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import type { CreateSessionRequest } from '@control-room/shared-types';
 import { toSessionDto } from '../lib/dto.js';
+import { roomChannel } from '../ws/room-channel.js';
 
 export async function sessionRoutes(app: FastifyInstance) {
   app.post<{ Params: { roomId: string }; Body: CreateSessionRequest }>(
@@ -17,7 +18,12 @@ export async function sessionRoutes(app: FastifyInstance) {
         data: { roomId, agent, name, mode: mode ?? 'readWrite' },
       });
 
-      return toSessionDto(session);
+      const dto = toSessionDto(session);
+
+      // Broadcast so left sidebar updates in real time
+      roomChannel.broadcast(roomId, { type: 'session.updated', data: dto });
+
+      return dto;
     },
   );
 

@@ -212,7 +212,10 @@ class RoomOrchestrator {
       prompt: '', // review doesn't need a prompt
       workingDirectory: workDir,
       worktreeId,
-    }, 'review', { target, customRef })
+    }, 'review', {
+      target,
+      customRef: target === 'baseBranch' && !customRef ? room.defaultBranch : customRef,
+    })
       .catch(async (err) => {
         console.error(`Review run ${runId} failed:`, err);
         try {

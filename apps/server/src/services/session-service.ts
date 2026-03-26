@@ -1,5 +1,6 @@
 import type { AgentSession, AgentKind, SessionStatus } from '@control-room/shared-types';
 import { canTransitionSession } from '@control-room/shared-types';
+import { ensureWorktree } from '@control-room/git-worktree';
 import { prisma } from '../db.js';
 import { toSessionDto } from '../lib/dto.js';
 import { roomChannel } from '../ws/room-channel.js';
@@ -7,6 +8,15 @@ import { roomChannel } from '../ws/room-channel.js';
 interface SessionMetadata {
   branch?: string;
   worktreePath?: string;
+}
+
+interface InteractiveSessionContext {
+  roomId: string;
+  agent: AgentKind;
+  cwd: string;
+  vendorSessionId?: string;
+  worktreeId?: string;
+  metadata: SessionMetadata;
 }
 
 export class SessionService {
@@ -119,6 +129,49 @@ export class SessionService {
     });
     await this.broadcastSessionUpdated(created.id);
     return toSessionDto(created);
+  }
+
+  async resolveInteractiveContext(sessionId: string): Promise<InteractiveSessionContext> {
+    const session = await prisma.agentSession.findUniqueOrThrow({ where: { id: sessionId } });
+    const room = await prisma.room.findUniqueOrThrow({ where: { id: session.roomId } });
+
+    let metadata = this.parseMetadata(session.metadataJson);
+    let cwd = room.repoPath;
+    let worktreeId = session.worktreeId ?? undefined;
+
+    if (session.mode === 'readWrite') {
+      let worktreePath = metadata.worktreePath;
+      let branch = metadata.branch;
+
+      if (!worktreePath || !branch) {
+        const wt = ensureWorktree({
+          repoPath: room.repoPath,
+          baseDir: room.repoPath,
+          agent: session.agent,
+          sessionKey: session.name,
+          baseBranch: room.defaultBranch,
+        });
+        const binding = await this.bindWorktree(session.id, {
+          path: wt.path,
+          branch: wt.branch,
+        });
+        worktreePath = binding.path;
+        branch = binding.branch;
+        worktreeId = binding.id;
+        metadata = { ...metadata, worktreePath, branch };
+      }
+
+      cwd = worktreePath;
+    }
+
+    return {
+      roomId: session.roomId,
+      agent: session.agent as AgentKind,
+      cwd,
+      vendorSessionId: session.vendorSessionId ?? undefined,
+      worktreeId,
+      metadata,
+    };
   }
 
   private parseMetadata(raw: string | null): SessionMetadata {

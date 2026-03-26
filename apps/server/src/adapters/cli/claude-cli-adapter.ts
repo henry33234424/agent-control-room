@@ -51,9 +51,9 @@ export class ClaudeCLIAdapter implements AgentDriver {
 
     return new Promise<void>((resolve) => {
       let resultText = '';
+      let streamedText = '';
       let extractedSessionId: string | undefined;
       let costUsd: number | undefined;
-      let hasResult = false;
 
       const runner = new CLIRunner();
 
@@ -67,13 +67,15 @@ export class ClaudeCLIAdapter implements AgentDriver {
           // Emit events
           for (const event of parsed.events) {
             await eventService.emitAndBroadcast(event);
+            if (event.kind === 'message.delta' && event.text) {
+              streamedText += event.text;
+            }
           }
 
           // Capture result metadata
           if (parsed.sessionId) extractedSessionId = parsed.sessionId;
           if (parsed.resultText !== undefined) {
             resultText = parsed.resultText;
-            hasResult = true;
           }
           if (parsed.costUsd !== undefined) costUsd = parsed.costUsd;
         },
@@ -95,24 +97,26 @@ export class ClaudeCLIAdapter implements AgentDriver {
 
         onExit: async (code) => {
           try {
+            const finalText = resultText || streamedText;
+
             // Save vendor session ID for future resume
             if (extractedSessionId) {
               await sessionService.setVendorSessionId(sessionId, extractedSessionId);
             }
 
-            if (code === 0 || hasResult) {
+            if (code === 0) {
               await runManager.transitionRun(runId, 'summarizing');
-              await runManager.setResult(runId, resultText, costUsd);
+              await runManager.setResult(runId, finalText, costUsd);
               await runManager.transitionRun(runId, 'completed');
               await sessionService.updateStatus(sessionId, 'idle');
 
-              if (resultText) {
+              if (finalText) {
                 await messageService.create({
                   roomId,
                   sessionId,
                   agent: 'claude',
                   role: 'agent',
-                  content: resultText,
+                  content: finalText,
                 });
               }
             } else {

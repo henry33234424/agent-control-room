@@ -11,6 +11,7 @@ export interface CodexCLIContext {
 export interface CodexCLIParseResult {
   events: RuntimeEvent[];
   resultText?: string;
+  sessionId?: string;
 }
 
 /**
@@ -65,6 +66,7 @@ export function parseCodexJsonlLine(
     // Thread lifecycle (Codex CLI uses dot-separated names)
     case 'thread.started':
     case 'turn.started':
+      result.sessionId = extractSessionId(msg);
       // No user-facing event needed, just log
       result.events.push({
         ...base,
@@ -106,6 +108,7 @@ export function parseCodexJsonlLine(
 
     // Turn completed — final result
     case 'turn.completed': {
+      result.sessionId = extractSessionId(msg) ?? result.sessionId;
       if (!result.resultText) {
         // Try to extract from turn data
         const text = extractText(msg);
@@ -195,6 +198,7 @@ export function parseCodexJsonlLine(
     case 'completed':
     case 'done':
     case 'turn_completed': {
+      result.sessionId = extractSessionId(msg) ?? result.sessionId;
       const text = extractText(msg);
       result.resultText = text;
       result.events.push({
@@ -247,6 +251,25 @@ export function parseCodexJsonlLine(
   }
 
   return result;
+}
+
+function extractSessionId(msg: Record<string, unknown>): string | undefined {
+  const candidates = [
+    msg.threadId,
+    msg.thread_id,
+    msg.sessionId,
+    msg.session_id,
+    (msg.thread as Record<string, unknown> | undefined)?.id,
+    (msg.thread as Record<string, unknown> | undefined)?.threadId,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate) {
+      return candidate;
+    }
+  }
+
+  return undefined;
 }
 
 function extractText(msg: Record<string, unknown>): string {
