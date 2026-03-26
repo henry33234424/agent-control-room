@@ -81,7 +81,7 @@ export class InteractiveDispatchService {
         vendorSessionId: target.vendorSessionId,
       });
 
-      ptyManager.dispatchPrompt({
+      await ptyManager.dispatchPrompt({
         roomId,
         sessionId: target.sessionId,
         agent: target.agent,

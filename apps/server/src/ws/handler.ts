@@ -69,7 +69,7 @@ export async function registerWebSocket(app: FastifyInstance) {
         }
 
         if (msg.type === 'pty.input') {
-          ptyManager.writeForSocket(ws, msg.sessionId, msg.data);
+          await ptyManager.writeForSocket(ws, msg.sessionId, msg.data);
           return;
         }
 

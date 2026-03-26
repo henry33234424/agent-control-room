@@ -13,6 +13,7 @@ interface ReplyTracking {
   sessionId: string;
   agent: AgentKind;
   replyToMessageId?: string;
+  replyToReady: Promise<void> | null;
   messageId?: string;
   text: string;
   lastFlushedText: string;
@@ -31,6 +32,7 @@ interface PtySession {
   buffer: string;
   detachTimer: NodeJS.Timeout | null;
   replyTracking: ReplyTracking | null;
+  inputBuffer: string;
 }
 
 class PtyManager {
@@ -87,6 +89,7 @@ class PtyManager {
       buffer: '',
       detachTimer: null,
       replyTracking: null,
+      inputBuffer: '',
     };
 
     this.sessions.set(input.sessionId, session);
@@ -100,7 +103,7 @@ class PtyManager {
     });
 
     ptyProcess.onExit(({ exitCode }) => {
-      void this.finalizeReplyTracking(session);
+      void this.finalizeReplyTracking(session, session.replyTracking);
       if (session.ws?.readyState === 1) {
         session.ws.send(JSON.stringify({
           type: 'pty.exit',
@@ -126,9 +129,10 @@ class PtyManager {
     }
   }
 
-  writeForSocket(ws: WebSocket, sessionId: string, data: string): void {
+  async writeForSocket(ws: WebSocket, sessionId: string, data: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session && session.ws === ws) {
+      await this.captureManualInput(session, data);
       session.ptyProcess.write(data);
     }
   }
@@ -183,34 +187,67 @@ class PtyManager {
     }
   }
 
-  dispatchPrompt(input: {
+  async dispatchPrompt(input: {
     roomId: string;
     sessionId: string;
     agent: AgentKind;
     prompt: string;
     replyToMessageId?: string;
-  }): void {
+  }): Promise<void> {
     const session = this.sessions.get(input.sessionId);
     if (!session) {
       throw new Error(`PTY session ${input.sessionId} is not running`);
     }
 
-    void this.finalizeReplyTracking(session);
+    await this.finalizeReplyTracking(session, session.replyTracking);
 
-    session.replyTracking = {
+    session.replyTracking = this.createReplyTracking({
       roomId: input.roomId,
       sessionId: input.sessionId,
       agent: input.agent,
       replyToMessageId: input.replyToMessageId,
-      text: '',
-      lastFlushedText: '',
       pendingEcho: input.prompt,
-      flushTimer: null,
-      flushing: false,
-      needsFlush: false,
-    };
+    });
 
     session.ptyProcess.write(`${input.prompt}\r`);
+  }
+
+  private async captureManualInput(session: PtySession, data: string): Promise<void> {
+    const consumed = consumeTerminalInput(session.inputBuffer, data);
+    session.inputBuffer = consumed.nextBuffer;
+
+    for (const line of consumed.submittedLines) {
+      await this.beginManualTurn(session, line);
+    }
+  }
+
+  private async beginManualTurn(session: PtySession, line: string): Promise<void> {
+    await this.finalizeReplyTracking(session, session.replyTracking);
+
+    const tracking = this.createReplyTracking({
+      roomId: session.roomId,
+      sessionId: session.sessionId,
+      agent: session.agent,
+      pendingEcho: line,
+    });
+
+    tracking.replyToReady = messageService
+      .create({
+        roomId: session.roomId,
+        sessionId: session.sessionId,
+        agent: session.agent,
+        role: 'user',
+        content: line,
+        selectable: true,
+      })
+      .then((msg) => {
+        tracking.replyToMessageId = msg.id;
+      })
+      .catch((err) => {
+        console.error('Failed to persist terminal input transcript:', err);
+      });
+
+    session.replyTracking = tracking;
   }
 
   private appendBuffer(buffer: string, data: string): string {
@@ -282,6 +319,9 @@ class PtyManager {
     tracking.flushing = true;
     try {
       const content = renderTranscriptMessage(tracking.text);
+      if (!tracking.messageId && tracking.replyToReady) {
+        await tracking.replyToReady;
+      }
       if (!tracking.messageId) {
         const msg = await messageService.create({
           roomId: tracking.roomId,
@@ -307,8 +347,10 @@ class PtyManager {
     }
   }
 
-  private async finalizeReplyTracking(session: PtySession): Promise<void> {
-    const tracking = session.replyTracking;
+  private async finalizeReplyTracking(
+    session: PtySession,
+    tracking: ReplyTracking | null,
+  ): Promise<void> {
     if (!tracking) return;
 
     if (tracking.flushTimer) {
@@ -316,8 +358,36 @@ class PtyManager {
       tracking.flushTimer = null;
     }
 
+    if (session.replyTracking !== tracking) {
+      return;
+    }
+
     await this.flushReplyTracking(session);
-    session.replyTracking = null;
+    if (session.replyTracking === tracking) {
+      session.replyTracking = null;
+    }
+  }
+
+  private createReplyTracking(input: {
+    roomId: string;
+    sessionId: string;
+    agent: AgentKind;
+    replyToMessageId?: string;
+    pendingEcho: string;
+  }): ReplyTracking {
+    return {
+      roomId: input.roomId,
+      sessionId: input.sessionId,
+      agent: input.agent,
+      replyToMessageId: input.replyToMessageId,
+      replyToReady: null,
+      text: '',
+      lastFlushedText: '',
+      pendingEcho: input.pendingEcho,
+      flushTimer: null,
+      flushing: false,
+      needsFlush: false,
+    };
   }
 }
 
@@ -358,6 +428,79 @@ function suppressPromptEcho(
     text: text.slice(textIndex),
     pendingEcho: pendingEcho.slice(echoIndex),
   };
+}
+
+export function consumeTerminalInput(
+  buffer: string,
+  data: string,
+): { nextBuffer: string; submittedLines: string[] } {
+  let nextBuffer = buffer;
+  const submittedLines: string[] = [];
+
+  for (let i = 0; i < data.length; i += 1) {
+    const char = data[i];
+
+    if (char === '\u001b') {
+      i = skipEscapeSequence(data, i);
+      continue;
+    }
+
+    if (char === '\r' || char === '\n') {
+      const line = nextBuffer.trimEnd();
+      if (line.trim()) {
+        submittedLines.push(line);
+      }
+      nextBuffer = '';
+      if (char === '\r' && data[i + 1] === '\n') {
+        i += 1;
+      }
+      continue;
+    }
+
+    if (char === '\u007f' || char === '\b') {
+      nextBuffer = nextBuffer.slice(0, -1);
+      continue;
+    }
+
+    if (char === '\t') {
+      nextBuffer += char;
+      continue;
+    }
+
+    if (isPrintableTerminalChar(char)) {
+      nextBuffer += char;
+    }
+  }
+
+  return { nextBuffer, submittedLines };
+}
+
+function skipEscapeSequence(data: string, index: number): number {
+  const next = data[index + 1];
+  if (!next) return index;
+
+  if (next === '[') {
+    let cursor = index + 2;
+    while (cursor < data.length) {
+      const code = data.charCodeAt(cursor);
+      if (code >= 0x40 && code <= 0x7e) {
+        return cursor;
+      }
+      cursor += 1;
+    }
+    return data.length - 1;
+  }
+
+  if (next === 'O') {
+    return Math.min(index + 2, data.length - 1);
+  }
+
+  return Math.min(index + 1, data.length - 1);
+}
+
+function isPrintableTerminalChar(char: string): boolean {
+  const code = char.charCodeAt(0);
+  return code >= 0x20 && code !== 0x7f;
 }
 
 function renderTranscriptMessage(text: string): string {
