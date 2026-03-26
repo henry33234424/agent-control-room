@@ -12,9 +12,7 @@ export function MessageInput({ roomId }: { roomId: string }) {
   const selectedSessionId = useUIStore((s) => s.selectedSessionId);
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
   const sessions = useRoomStore((s) => s.sessions);
-  const clearEvents = useConsoleStore((s) => s.clearEvents);
   const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
-  const setCurrentRunId = useConsoleStore((s) => s.setCurrentRunId);
   const selectedMessageIds = useSelectionStore((s) => s.selectedMessageIds);
   const clearSelection = useSelectionStore((s) => s.clear);
   const [content, setContent] = useState('');
@@ -53,8 +51,6 @@ export function MessageInput({ roomId }: { roomId: string }) {
       if (msg.sessionId) {
         setSelectedSessionId(msg.sessionId);
         setConsoleSession(msg.sessionId);
-        clearEvents();
-        setCurrentRunId(null);
       }
       clearSelection();
       setContent('');

@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { api } from '@/lib/api-client';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { wsClient } from '@/lib/ws-client';
 import { useRoomStore } from '@/stores/room-store';
 import { useUIStore } from '@/stores/ui-store';
@@ -14,7 +13,6 @@ export function TerminalPanel() {
   const room = useRoomStore((s) => s.room);
   const sessions = useRoomStore((s) => s.sessions);
   const selectedSessionId = useUIStore((s) => s.selectedSessionId);
-  const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
 
   const termRef = useRef<HTMLDivElement>(null);
   const termInstanceRef = useRef<any>(null);
@@ -26,6 +24,14 @@ export function TerminalPanel() {
     _setActivePtySessionId(id);
   };
   const [loaded, setLoaded] = useState(false);
+  const selectedSession = useMemo(
+    () => sessions.find((session) => session.id === selectedSessionId) ?? null,
+    [sessions, selectedSessionId],
+  );
+  const activeSession = useMemo(
+    () => sessions.find((session) => session.id === activePtySessionId) ?? null,
+    [sessions, activePtySessionId],
+  );
 
   // Load xterm dynamically
   useEffect(() => {
@@ -77,8 +83,8 @@ export function TerminalPanel() {
     term.writeln('\x1b[36m║       Control Room Terminal          ║\x1b[0m');
     term.writeln('\x1b[36m╚══════════════════════════════════════╝\x1b[0m');
     term.writeln('');
-    term.writeln('Select a session from the left panel, or create one by');
-    term.writeln('sending a message with @Claude or @Codex.');
+    term.writeln('Use the left sidebar to select a project and start a');
+    term.writeln('Claude or Codex session.');
     term.writeln('');
 
     // Forward user input to PTY via WebSocket (use ref to always get latest value)
@@ -168,80 +174,44 @@ export function TerminalPanel() {
     setActivePtySessionId(selectedSessionId);
   }, [room, selectedSessionId, sessions, loaded]);
 
-  // Quick launch: create a real AgentSession via API, then start PTY
-  const handleLaunch = async (agent: 'claude' | 'codex') => {
-    if (!room) return;
-
-    const term = termInstanceRef.current;
-
-    // Create a real session via API
-    try {
-      const session = await api.sessions.create(room.id, {
-        agent,
-        name: `${agent}-${Date.now()}`,
-      });
-
-      if (term) {
-        term.clear();
-        term.writeln(`\x1b[36m── Creating ${agent === 'claude' ? 'Claude' : 'Codex'} session (${session.name}) ──\x1b[0m`);
-        term.writeln('\x1b[90mWaiting for terminal to attach…\x1b[0m');
-        term.writeln('');
-      }
-
-      useRoomStore.getState().handleWsEvent({ type: 'session.updated', data: session });
-      setSelectedSessionId(session.id);
-    } catch (err) {
-      if (term) {
-        term.writeln(`\x1b[31mFailed to create session: ${err instanceof Error ? err.message : String(err)}\x1b[0m`);
-      }
-    }
-  };
-
   return (
-    <div className="flex flex-col h-full bg-[#0a0e14]">
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-gray-900 border-b border-gray-800">
-        <button
-          onClick={() => handleLaunch('claude')}
-          disabled={!room}
-          className="px-3 py-1 text-xs bg-purple-700 text-white rounded hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          + Claude
-        </button>
-        <button
-          onClick={() => handleLaunch('codex')}
-          disabled={!room}
-          className="px-3 py-1 text-xs bg-green-700 text-white rounded hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          + Codex
-        </button>
-        {!room && (
-          <span className="text-xs text-gray-500">
-            Select a project from the left, or add one.
-          </span>
-        )}
-        {activePtySessionId && (
-          <>
-            <div className="w-px h-4 bg-gray-700" />
-            <span className="text-xs text-gray-400">
-              Active: {activePtySessionId.slice(0, 12)}…
-            </span>
-            <button
-              onClick={() => {
-                wsClient.send({ type: 'pty.kill', sessionId: activePtySessionId } as any);
-                setActivePtySessionId(null);
-                termInstanceRef.current?.writeln('\r\n\x1b[31m[Killed]\x1b[0m');
-              }}
-              className="px-2 py-0.5 text-xs text-red-400 hover:text-red-300 transition-colors"
-            >
-              Kill
-            </button>
-          </>
-        )}
-      </div>
+    <div className="relative h-full bg-[#0a0e14]">
+      <div ref={termRef} className="absolute inset-0 p-1" />
 
-      {/* Terminal */}
-      <div ref={termRef} className="flex-1 p-1" />
+      {!room && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="rounded-xl border border-gray-800 bg-gray-950/90 px-4 py-3 text-center shadow-2xl">
+            <div className="text-sm font-medium text-gray-200">No project selected</div>
+            <div className="mt-1 text-xs text-gray-500">Choose or add a project from the left sidebar.</div>
+          </div>
+        </div>
+      )}
+
+      {room && !selectedSession && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="rounded-xl border border-gray-800 bg-gray-950/90 px-4 py-3 text-center shadow-2xl">
+            <div className="text-sm font-medium text-gray-200">{room.name}</div>
+            <div className="mt-1 text-xs text-gray-500">Create or select a Claude/Codex session from the left.</div>
+          </div>
+        </div>
+      )}
+
+      {activePtySessionId && activeSession && (
+        <div className="absolute right-3 top-3 flex items-center gap-2 rounded-full border border-gray-800 bg-gray-950/90 px-3 py-1.5 shadow-lg">
+          <span className="text-[10px] uppercase tracking-wide text-gray-500">{activeSession.agent}</span>
+          <span className="max-w-52 truncate text-xs text-gray-300">{activeSession.name}</span>
+          <button
+            onClick={() => {
+              wsClient.send({ type: 'pty.kill', sessionId: activePtySessionId } as any);
+              setActivePtySessionId(null);
+              termInstanceRef.current?.writeln('\r\n\x1b[31m[Killed]\x1b[0m');
+            }}
+            className="text-xs text-red-400 hover:text-red-300 transition-colors"
+          >
+            Kill
+          </button>
+        </div>
+      )}
     </div>
   );
 }

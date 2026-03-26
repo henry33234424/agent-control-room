@@ -19,12 +19,11 @@ const STATUS_COLORS: Record<string, string> = {
 export function SessionTree() {
   const router = useRouter();
   const room = useRoomStore((s) => s.room);
+  const handleRoomEvent = useRoomStore((s) => s.handleWsEvent);
   const sessions = useRoomStore((s) => s.sessions);
   const selectedId = useUIStore((s) => s.selectedSessionId);
   const setSelectedId = useUIStore((s) => s.setSelectedSessionId);
   const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
-  const setCurrentRunId = useConsoleStore((s) => s.setCurrentRunId);
-  const loadEvents = useConsoleStore((s) => s.loadEvents);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [expandedRooms, setExpandedRooms] = useState<Set<string>>(new Set());
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set(['claude', 'codex']));
@@ -32,6 +31,7 @@ export function SessionTree() {
   const [projectName, setProjectName] = useState('');
   const [projectPath, setProjectPath] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
+  const [creatingSessionFor, setCreatingSessionFor] = useState<AgentKind | null>(null);
 
   useEffect(() => {
     api.rooms.list().then(setRooms).catch((err) => {
@@ -49,29 +49,9 @@ export function SessionTree() {
     });
   }, [room?.id]);
 
-  const handleSelect = async (id: string) => {
+  const handleSelect = (id: string) => {
     setSelectedId(id);
     setConsoleSession(id);
-
-    // Load latest run's events for this session
-    if (room) {
-      try {
-        const runs = await api.runs.list(room.id, id);
-        if (runs.length > 0) {
-          const latestRun = runs[0]; // sorted desc by createdAt
-          setCurrentRunId(latestRun.id);
-          const result = await api.runs.events(room.id, latestRun.id);
-          loadEvents(result.items);
-        } else {
-          setCurrentRunId(null);
-          loadEvents([]);
-        }
-      } catch (err) {
-        console.error('Failed to load session events:', err);
-        setCurrentRunId(null);
-        loadEvents([]);
-      }
-    }
   };
 
   const currentRoomId = room?.id ?? null;
@@ -128,6 +108,31 @@ export function SessionTree() {
     }
   };
 
+  const handleCreateSession = async (agent: AgentKind) => {
+    if (!room || creatingSessionFor) return;
+
+    setCreatingSessionFor(agent);
+    try {
+      const session = await api.sessions.create(room.id, {
+        agent,
+        name: `${agent}-${Date.now()}`,
+      });
+      handleRoomEvent({ type: 'session.updated', data: session });
+      setSelectedId(session.id);
+      setConsoleSession(session.id);
+      setExpandedAgents((prev) => {
+        const next = new Set(prev);
+        next.add(agent);
+        return next;
+      });
+    } catch (err) {
+      console.error(`Failed to create ${agent} session:`, err);
+      alert(err instanceof Error ? err.message : `Failed to create ${agent} session`);
+    } finally {
+      setCreatingSessionFor(null);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="p-3 border-b border-gray-700">
@@ -166,6 +171,8 @@ export function SessionTree() {
                     expanded={expandedAgents.has('claude')}
                     onToggle={() => toggleAgent('claude')}
                     onSelect={handleSelect}
+                    onCreate={() => handleCreateSession('claude')}
+                    creating={creatingSessionFor === 'claude'}
                   />
                   <AgentGroup
                     agent="codex"
@@ -175,6 +182,8 @@ export function SessionTree() {
                     expanded={expandedAgents.has('codex')}
                     onToggle={() => toggleAgent('codex')}
                     onSelect={handleSelect}
+                    onCreate={() => handleCreateSession('codex')}
+                    creating={creatingSessionFor === 'codex'}
                   />
                 </div>
               )}
@@ -228,6 +237,8 @@ function AgentGroup({
   expanded,
   onToggle,
   onSelect,
+  onCreate,
+  creating,
 }: {
   agent: AgentKind;
   label: string;
@@ -243,18 +254,30 @@ function AgentGroup({
   expanded: boolean;
   onToggle: () => void;
   onSelect: (id: string) => void;
+  onCreate: () => void;
+  creating: boolean;
 }) {
   return (
     <div className="px-1 py-1">
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 hover:bg-gray-900 transition-colors"
-      >
-        <span className="text-[10px] text-gray-600">{expanded ? 'v' : '>'}</span>
-        <span className="text-[10px] uppercase tracking-wide text-gray-600">dir</span>
-        <span>{label}</span>
-        <span className="ml-auto text-[10px] text-gray-600">{sessions.length}</span>
-      </button>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={onToggle}
+          className="flex-1 flex items-center gap-2 px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 hover:bg-gray-900 transition-colors rounded"
+        >
+          <span className="text-[10px] text-gray-600">{expanded ? 'v' : '>'}</span>
+          <span className="text-[10px] uppercase tracking-wide text-gray-600">dir</span>
+          <span>{label}</span>
+          <span className="ml-auto text-[10px] text-gray-600">{sessions.length}</span>
+        </button>
+        <button
+          onClick={onCreate}
+          disabled={creating}
+          title={`New ${label} session`}
+          className="px-2 py-1.5 text-xs font-semibold text-gray-400 hover:bg-gray-900 hover:text-gray-200 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {creating ? '...' : '+'}
+        </button>
+      </div>
 
       {expanded && (
         <div className="mt-1 space-y-1 border-l border-gray-800 ml-3 pl-2">

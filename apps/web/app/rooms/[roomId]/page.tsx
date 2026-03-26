@@ -18,13 +18,11 @@ export default function RoomPage() {
   const setSnapshot = useRoomStore((s) => s.setSnapshot);
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
   const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
-  const loadEvents = useConsoleStore((s) => s.loadEvents);
-  const setCurrentRunId = useConsoleStore((s) => s.setCurrentRunId);
 
   // Connect WebSocket after initial HTTP snapshot is loaded to avoid HTTP/WS snapshot races.
   useWebSocket(roomId, !loading);
 
-  // Load initial snapshot + auto-select most recent session + load its events
+  // Load initial snapshot + auto-select most recent session
   useEffect(() => {
     if (!roomId) return;
 
@@ -32,13 +30,11 @@ export default function RoomPage() {
     setSnapshot({ room: null, sessions: [], recentMessages: [], pinnedBrief: [], pendingApprovals: [] });
     setSelectedSessionId(null);
     setConsoleSession(null);
-    loadEvents([]);
-    setCurrentRunId(null);
     setLoading(true);
 
     api.rooms
       .get(roomId)
-      .then(async (snapshot) => {
+      .then((snapshot) => {
         setSnapshot(snapshot);
 
         // Auto-select the most recently updated session
@@ -46,27 +42,10 @@ export default function RoomPage() {
           const mostRecent = snapshot.sessions[0]; // already sorted by updatedAt desc
           setSelectedSessionId(mostRecent.id);
           setConsoleSession(mostRecent.id);
-
-          // Load the latest run's events for this session
-          try {
-            const runs = await api.runs.list(roomId, mostRecent.id);
-            if (runs.length > 0) {
-              setCurrentRunId(runs[0].id);
-              const result = await api.runs.events(roomId, runs[0].id);
-              loadEvents(result.items);
-            } else {
-              setCurrentRunId(null);
-              loadEvents([]);
-            }
-          } catch {
-            // No runs yet, that's fine
-            setCurrentRunId(null);
-            loadEvents([]);
-          }
         }
       })
       .finally(() => setLoading(false));
-  }, [roomId, setSnapshot, setSelectedSessionId, setConsoleSession, loadEvents, setCurrentRunId]);
+  }, [roomId, setSnapshot, setSelectedSessionId, setConsoleSession]);
 
   if (loading) {
     return (

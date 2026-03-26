@@ -13,8 +13,6 @@ export default function HomePage() {
   const setSnapshot = useRoomStore((s) => s.setSnapshot);
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
   const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
-  const loadEvents = useConsoleStore((s) => s.loadEvents);
-  const setCurrentRunId = useConsoleStore((s) => s.setCurrentRunId);
 
   useEffect(() => {
     setSnapshot({
@@ -26,9 +24,7 @@ export default function HomePage() {
     });
     setSelectedSessionId(null);
     setConsoleSession(null);
-    loadEvents([]);
-    setCurrentRunId(null);
-  }, [setSnapshot, setSelectedSessionId, setConsoleSession, loadEvents, setCurrentRunId]);
+  }, [setSnapshot, setSelectedSessionId, setConsoleSession]);
 
   return (
     <ResizablePanels

@@ -12,8 +12,6 @@ export function HandoffBar({ roomId }: { roomId: string }) {
   const clear = useSelectionStore((s) => s.clear);
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
   const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
-  const clearEvents = useConsoleStore((s) => s.clearEvents);
-  const setCurrentRunId = useConsoleStore((s) => s.setCurrentRunId);
   const [instruction, setInstruction] = useState('');
   const [sending, setSending] = useState(false);
 
@@ -31,8 +29,6 @@ export function HandoffBar({ roomId }: { roomId: string }) {
       if (msg.sessionId) {
         setSelectedSessionId(msg.sessionId);
         setConsoleSession(msg.sessionId);
-        clearEvents();
-        setCurrentRunId(null);
       }
       clear();
       setInstruction('');
