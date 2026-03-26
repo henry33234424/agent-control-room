@@ -28,6 +28,10 @@ export function SessionTree() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [expandedRooms, setExpandedRooms] = useState<Set<string>>(new Set());
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set(['claude', 'codex']));
+  const [addingProject, setAddingProject] = useState(false);
+  const [projectName, setProjectName] = useState('');
+  const [projectPath, setProjectPath] = useState('');
+  const [creatingProject, setCreatingProject] = useState(false);
 
   useEffect(() => {
     api.rooms.list().then(setRooms).catch((err) => {
@@ -102,6 +106,28 @@ export function SessionTree() {
     });
   };
 
+  const handleCreateProject = async () => {
+    if (!projectName.trim() || !projectPath.trim() || creatingProject) return;
+
+    setCreatingProject(true);
+    try {
+      const created = await api.rooms.create({
+        name: projectName.trim(),
+        repoPath: projectPath.trim(),
+      });
+      setRooms((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setProjectName('');
+      setProjectPath('');
+      setAddingProject(false);
+      router.push(`/rooms/${created.id}`);
+    } catch (err) {
+      console.error('Failed to create project:', err);
+      alert(err instanceof Error ? err.message : 'Failed to create project');
+    } finally {
+      setCreatingProject(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="p-3 border-b border-gray-700">
@@ -155,6 +181,40 @@ export function SessionTree() {
             </div>
           );
         })}
+
+        <div className="mt-3 rounded-lg border border-dashed border-gray-700 bg-gray-950/30 p-2">
+          <button
+            onClick={() => setAddingProject((prev) => !prev)}
+            className="w-full flex items-center justify-between text-left text-xs font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-200 transition-colors"
+          >
+            <span>Add Project</span>
+            <span className="text-gray-600">{addingProject ? 'v' : '+'}</span>
+          </button>
+
+          {addingProject && (
+            <div className="mt-2 space-y-2">
+              <input
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+                placeholder="Project name"
+                className="w-full rounded border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              />
+              <input
+                value={projectPath}
+                onChange={(e) => setProjectPath(e.target.value)}
+                placeholder="Absolute repo path"
+                className="w-full rounded border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              />
+              <button
+                onClick={handleCreateProject}
+                disabled={creatingProject || !projectName.trim() || !projectPath.trim()}
+                className="w-full rounded bg-blue-600 px-2 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+              >
+                {creatingProject ? 'Adding...' : 'Add Project'}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

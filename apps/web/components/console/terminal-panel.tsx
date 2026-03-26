@@ -203,16 +203,23 @@ export function TerminalPanel() {
       <div className="flex items-center gap-2 px-3 py-2 bg-gray-900 border-b border-gray-800">
         <button
           onClick={() => handleLaunch('claude')}
-          className="px-3 py-1 text-xs bg-purple-700 text-white rounded hover:bg-purple-600 transition-colors"
+          disabled={!room}
+          className="px-3 py-1 text-xs bg-purple-700 text-white rounded hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           + Claude
         </button>
         <button
           onClick={() => handleLaunch('codex')}
-          className="px-3 py-1 text-xs bg-green-700 text-white rounded hover:bg-green-600 transition-colors"
+          disabled={!room}
+          className="px-3 py-1 text-xs bg-green-700 text-white rounded hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           + Codex
         </button>
+        {!room && (
+          <span className="text-xs text-gray-500">
+            Select a project from the left, or add one.
+          </span>
+        )}
         {activePtySessionId && (
           <>
             <div className="w-px h-4 bg-gray-700" />
