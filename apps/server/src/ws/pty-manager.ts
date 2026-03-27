@@ -117,6 +117,26 @@ class PtyManager {
     });
   }
 
+  /**
+   * Attach a WebSocket to an existing PTY session without replaying the buffer.
+   * Used when switching back to a session whose Terminal already has the content.
+   */
+  attach(sessionId: string, ws: WebSocket): boolean {
+    const session = this.sessions.get(sessionId);
+    if (!session) return false;
+
+    if (session.detachTimer) {
+      clearTimeout(session.detachTimer);
+      session.detachTimer = null;
+    }
+
+    // Detach this WS from any other session first
+    this.detachBySocket(ws);
+
+    session.ws = ws;
+    return true;
+  }
+
   has(sessionId: string): boolean {
     return this.sessions.has(sessionId);
   }

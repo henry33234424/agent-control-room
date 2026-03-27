@@ -68,6 +68,11 @@ export async function registerWebSocket(app: FastifyInstance) {
           return;
         }
 
+        if (msg.type === 'pty.attach') {
+          ptyManager.attach(msg.sessionId, ws);
+          return;
+        }
+
         if (msg.type === 'pty.input') {
           await ptyManager.writeForSocket(ws, msg.sessionId, msg.data);
           return;

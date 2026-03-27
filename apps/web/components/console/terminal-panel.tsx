@@ -122,6 +122,9 @@ export function TerminalPanel() {
         cols: inst.term.cols,
         rows: inst.term.rows,
       } as any);
+    } else {
+      // Re-attach WS to existing PTY (without buffer replay) so input works
+      wsClient.send({ type: 'pty.attach', sessionId: selectedSessionId } as any);
     }
   }, [loaded, selectedSessionId, sessions, room, getOrCreateTerm]);
 
