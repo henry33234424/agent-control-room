@@ -151,6 +151,14 @@ class PtyManager {
     }
   }
 
+  /**
+   * Mark a user message as already sent (for dedup in SessionWatcher).
+   */
+  markSent(sessionId: string, content: string): void {
+    const session = this.sessions.get(sessionId);
+    session?.sessionWatcher?.markSent(content);
+  }
+
   writeForSocket(ws: WebSocket, sessionId: string, data: string): void {
     const session = this.sessions.get(sessionId);
     if (session && session.ws === ws) {
