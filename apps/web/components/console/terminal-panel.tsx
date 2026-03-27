@@ -198,6 +198,33 @@ export function TerminalPanel() {
     };
   }, [loaded]);
 
+  // Re-fit terminal when browser tab becomes visible again
+  useEffect(() => {
+    if (!loaded) return;
+
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      // Re-fit all visible terminals after tab switch
+      const activeId = activeSessionRef.current;
+      if (!activeId) return;
+      const inst = termsRef.current.get(activeId);
+      if (!inst) return;
+      // Small delay to let the browser finish layout
+      setTimeout(() => {
+        inst.fitAddon.fit();
+        wsClient.send({
+          type: 'pty.resize',
+          sessionId: activeId,
+          cols: inst.term.cols,
+          rows: inst.term.rows,
+        } as any);
+      }, 100);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [loaded]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
