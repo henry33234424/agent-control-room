@@ -88,6 +88,7 @@ export class InteractiveDispatchService {
         sessionId: target.sessionId,
         prompt: target.prompt,
       });
+      ptyManager.markSent(target.sessionId, target.prompt);
     }
   }
 
@@ -98,7 +99,6 @@ export class InteractiveDispatchService {
     cwd: string;
     vendorSessionId?: string;
   }): void {
-    console.log('[dispatch] ensurePtyStarted', input.sessionId, input.agent, input.cwd);
     if (ptyManager.has(input.sessionId)) {
       return;
     }
@@ -127,6 +127,7 @@ export class InteractiveDispatchService {
       command,
       args,
       cwd: input.cwd,
+      vendorSessionId: input.vendorSessionId,
       ws: null,
     });
   }

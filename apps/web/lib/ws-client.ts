@@ -1,12 +1,14 @@
 import type { ClientWsEvent, ServerWsEvent } from '@control-room/shared-types';
 
 export type WsEventHandler = (event: ServerWsEvent) => void;
+export type WsOpenHandler = () => void;
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:3002/ws';
 
 export class WsClient {
   private ws: WebSocket | null = null;
   private handlers = new Set<WsEventHandler>();
+  private openHandlers = new Set<WsOpenHandler>();
   private roomId: string | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
@@ -30,6 +32,11 @@ export class WsClient {
   onEvent(handler: WsEventHandler): () => void {
     this.handlers.add(handler);
     return () => this.handlers.delete(handler);
+  }
+
+  onOpen(handler: WsOpenHandler): () => void {
+    this.openHandlers.add(handler);
+    return () => this.openHandlers.delete(handler);
   }
 
   send(event: ClientWsEvent): void {
@@ -56,6 +63,9 @@ export class WsClient {
       for (const event of queuedEvents) {
         if (event.type === 'room.subscribe' || event.type === 'room.unsubscribe') continue;
         this.ws?.send(JSON.stringify(event));
+      }
+      for (const handler of this.openHandlers) {
+        handler();
       }
     };
 

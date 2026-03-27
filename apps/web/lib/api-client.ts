@@ -70,6 +70,16 @@ export const api = {
         body: JSON.stringify(data),
       }),
   },
+  excerpts: {
+    create: (
+      roomId: string,
+      data: { content: string; sourceAgent?: string; sourceSessionId?: string },
+    ) =>
+      request<ChatMessage>(`/api/rooms/${roomId}/excerpts`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+  },
   runs: {
     list: (roomId: string, sessionId?: string) =>
       request<RunSummary[]>(

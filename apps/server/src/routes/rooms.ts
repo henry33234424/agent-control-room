@@ -7,6 +7,8 @@ import { toRoomDto, toSessionDto, toMessageDto, toPinDto } from '../lib/dto.js';
 import { removeWorktree } from '@control-room/git-worktree';
 import { approvalService } from '../services/approval-service.js';
 
+const RECENT_MESSAGE_LIMIT = 200;
+
 export async function roomRoutes(app: FastifyInstance) {
   // Create room
   app.post<{ Body: CreateRoomRequest }>('/api/rooms', async (req, reply) => {
@@ -34,7 +36,7 @@ export async function roomRoutes(app: FastifyInstance) {
       where: { id: req.params.roomId },
       include: {
         sessions: { orderBy: { updatedAt: 'desc' } },
-        chatMessages: { orderBy: { createdAt: 'desc' }, take: 50 },
+        chatMessages: { orderBy: { createdAt: 'desc' }, take: RECENT_MESSAGE_LIMIT },
         pinnedBriefItems: { orderBy: { sortOrder: 'asc' } },
       },
     });

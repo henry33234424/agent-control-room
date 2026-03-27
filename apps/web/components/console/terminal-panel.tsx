@@ -159,6 +159,16 @@ export function TerminalPanel() {
     return unsub;
   }, [loaded]);
 
+  useEffect(() => {
+    if (!loaded) return;
+
+    return wsClient.onOpen(() => {
+      const activeId = activeSessionRef.current;
+      if (!activeId) return;
+      wsClient.send({ type: 'pty.attach', sessionId: activeId } as any);
+    });
+  }, [loaded]);
+
   // Resize observer — debounced, resizes the active terminal
   useEffect(() => {
     if (!loaded || !wrapperRef.current) return;
@@ -209,14 +219,10 @@ export function TerminalPanel() {
       if (target === 'context') {
         // Create excerpt via dedicated API (no agent dispatch)
         const activeAgent = activeSession?.agent;
-        await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3002'}/api/rooms/${room.id}/excerpts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            content: selectedText,
-            sourceAgent: activeAgent,
-            sourceSessionId: activeSessionRef.current,
-          }),
+        await api.excerpts.create(room.id, {
+          content: selectedText,
+          sourceAgent: activeAgent,
+          sourceSessionId: activeSessionRef.current ?? undefined,
         });
       } else if (target === 'brief') {
         await api.pins.create(room.id, { section: 'decisions', content: selectedText });

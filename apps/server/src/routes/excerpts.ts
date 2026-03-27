@@ -23,6 +23,16 @@ export async function excerptRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'Content is required' });
       }
 
+      if (sourceSessionId) {
+        const session = await prisma.agentSession.findUnique({ where: { id: sourceSessionId } });
+        if (!session || session.roomId !== roomId) {
+          return reply.status(400).send({ error: 'Source session does not belong to room' });
+        }
+        if (sourceAgent && session.agent !== sourceAgent) {
+          return reply.status(400).send({ error: 'Source agent does not match source session' });
+        }
+      }
+
       const msg = await messageService.create({
         roomId,
         sessionId: sourceSessionId,

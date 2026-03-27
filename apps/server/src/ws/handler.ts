@@ -8,6 +8,8 @@ import { sessionService } from '../services/session-service.js';
 import { ptyManager } from './pty-manager.js';
 import { config } from '../config.js';
 
+const RECENT_MESSAGE_LIMIT = 200;
+
 export async function registerWebSocket(app: FastifyInstance) {
   app.get('/ws', { websocket: true }, (socket, req) => {
     const ws = socket;
@@ -56,6 +58,7 @@ export async function registerWebSocket(app: FastifyInstance) {
               command,
               args,
               cwd: ctx.cwd,
+              vendorSessionId: ctx.vendorSessionId,
               ws,
               cols,
               rows,
@@ -69,7 +72,30 @@ export async function registerWebSocket(app: FastifyInstance) {
         }
 
         if (msg.type === 'pty.attach') {
-          ptyManager.attach(msg.sessionId, ws);
+          try {
+            const ctx = await sessionService.resolveInteractiveContext(msg.sessionId);
+            if (!subscribedRoomId || ctx.roomId !== subscribedRoomId) {
+              ws.send(JSON.stringify({
+                type: 'pty.exit',
+                sessionId: msg.sessionId,
+                exitCode: 1,
+                error: 'Session does not belong to subscribed room',
+              }));
+              return;
+            }
+
+            if (!ptyManager.attach(msg.sessionId, ws)) {
+              ws.send(JSON.stringify({
+                type: 'pty.exit',
+                sessionId: msg.sessionId,
+                exitCode: 1,
+                error: 'PTY session is not running',
+              }));
+            }
+          } catch (err) {
+            const error = err instanceof Error ? err.message : 'Failed to attach terminal session';
+            ws.send(JSON.stringify({ type: 'pty.exit', sessionId: msg.sessionId, exitCode: 1, error }));
+          }
           return;
         }
 
@@ -103,7 +129,7 @@ export async function registerWebSocket(app: FastifyInstance) {
               where: { id: event.roomId },
               include: {
                 sessions: { orderBy: { updatedAt: 'desc' } },
-                chatMessages: { orderBy: { createdAt: 'desc' }, take: 50 },
+                chatMessages: { orderBy: { createdAt: 'desc' }, take: RECENT_MESSAGE_LIMIT },
                 pinnedBriefItems: { orderBy: { sortOrder: 'asc' } },
               },
             });

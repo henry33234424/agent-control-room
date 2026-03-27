@@ -2,6 +2,8 @@ import { createRequire } from 'node:module';
 import type { WebSocket } from '@fastify/websocket';
 import type { AgentKind } from '@control-room/shared-types';
 import type { IPty } from 'node-pty';
+import { sessionService } from '../services/session-service.js';
+import { SessionWatcher } from './session-watcher.js';
 const require_ = createRequire(import.meta.url);
 const pty: { spawn: typeof import('node-pty').spawn } = require_('node-pty');
 
@@ -13,6 +15,7 @@ interface PtySession {
   roomId: string;
   buffer: string;
   detachTimer: NodeJS.Timeout | null;
+  watcher: SessionWatcher;
 }
 
 /**
@@ -32,6 +35,7 @@ class PtyManager {
     command: string;
     args: string[];
     cwd: string;
+    vendorSessionId?: string;
     ws?: WebSocket | null;
     cols?: number;
     rows?: number;
@@ -77,9 +81,20 @@ class PtyManager {
       roomId: input.roomId,
       buffer: '',
       detachTimer: null,
+      watcher: new SessionWatcher({
+        roomId: input.roomId,
+        sessionId: input.sessionId,
+        agent: input.agent,
+        onVendorSessionId: (vendorSessionId) => {
+          void sessionService.setVendorSessionId(input.sessionId, vendorSessionId).catch((err) => {
+            console.error('[pty-manager] Failed to persist vendor session ID:', err);
+          });
+        },
+      }),
     };
 
     this.sessions.set(input.sessionId, session);
+    session.watcher.start(input.cwd, input.vendorSessionId);
 
     // PTY output → WebSocket (for terminal display)
     ptyProcess.onData((data: string) => {
@@ -100,6 +115,7 @@ class PtyManager {
       if (session.detachTimer) {
         clearTimeout(session.detachTimer);
       }
+      session.watcher.stop();
       this.sessions.delete(input.sessionId);
     });
   }
@@ -126,6 +142,11 @@ class PtyManager {
 
   has(sessionId: string): boolean {
     return this.sessions.has(sessionId);
+  }
+
+  markSent(sessionId: string, content: string): void {
+    const session = this.sessions.get(sessionId);
+    session?.watcher.markSent(content);
   }
 
   /**
@@ -186,6 +207,7 @@ class PtyManager {
       if (session.detachTimer) {
         clearTimeout(session.detachTimer);
       }
+      session.watcher.stop();
       session.ptyProcess.kill();
       this.sessions.delete(sessionId);
     }
@@ -251,6 +273,7 @@ class PtyManager {
       if (!current || current.ws) {
         return;
       }
+      current.watcher.stop();
       current.ptyProcess.kill();
       this.sessions.delete(session.sessionId);
     }, this.detachTtlMs);

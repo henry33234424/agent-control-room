@@ -1,8 +1,14 @@
 import { watch, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { homedir } from 'node:os';
 import type { AgentKind } from '@control-room/shared-types';
 import { messageService } from '../services/message-service.js';
+
+interface SessionFileMatch {
+  path: string;
+  readFromStart: boolean;
+  vendorSessionId?: string;
+}
 
 /**
  * Watches CLI session JSONL files for new messages.
@@ -15,42 +21,56 @@ export class SessionWatcher {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private bytesRead = 0;
   private filePath: string | null = null;
+  private startedAtMs = 0;
+  private vendorSessionId?: string;
   private roomId: string;
   private sessionId: string;
   private agent: AgentKind;
-  private seenContent = new Set<string>(); // dedup user messages from chat API
+  private pendingSentContent = new Map<string, number>(); // consume-once dedup for chat API prompts
   private stopped = false;
+  private onVendorSessionId?: (vendorSessionId: string) => void;
 
-  constructor(input: { roomId: string; sessionId: string; agent: AgentKind }) {
+  constructor(input: {
+    roomId: string;
+    sessionId: string;
+    agent: AgentKind;
+    onVendorSessionId?: (vendorSessionId: string) => void;
+  }) {
     this.roomId = input.roomId;
     this.sessionId = input.sessionId;
     this.agent = input.agent;
+    this.onVendorSessionId = input.onVendorSessionId;
   }
 
   /**
    * Register a user message content that was already created via chat API.
-   * SessionWatcher will skip this content to avoid duplicates.
+   * SessionWatcher will skip the next matching content to avoid duplicates.
    */
   markSent(content: string): void {
-    this.seenContent.add(content.trim());
-    // Keep set bounded
-    if (this.seenContent.size > 50) {
-      const first = this.seenContent.values().next().value;
-      if (first) this.seenContent.delete(first);
+    const normalized = normalizeContent(content);
+    if (!normalized) return;
+
+    this.pendingSentContent.set(normalized, (this.pendingSentContent.get(normalized) ?? 0) + 1);
+
+    // Keep map bounded
+    if (this.pendingSentContent.size > 50) {
+      const first = this.pendingSentContent.keys().next().value;
+      if (first) this.pendingSentContent.delete(first);
     }
   }
 
-  start(cwd: string): void {
+  start(cwd: string, vendorSessionId?: string): void {
     this.stopped = false;
+    this.startedAtMs = Date.now();
+    this.vendorSessionId = vendorSessionId;
 
     // Poll for the session file to appear
     this.pollTimer = setInterval(() => {
       if (this.stopped) return;
 
-      const file = this.findSessionFile(cwd);
-      if (file) {
-        this.filePath = file;
-        this.startWatching();
+      const match = this.findSessionFile(cwd);
+      if (match) {
+        this.startWatching(match);
         if (this.pollTimer) {
           clearInterval(this.pollTimer);
           this.pollTimer = null;
@@ -63,14 +83,20 @@ export class SessionWatcher {
     this.stopped = true;
     if (this.watcher) { this.watcher.close(); this.watcher = null; }
     if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+    this.filePath = null;
+    this.bytesRead = 0;
   }
 
-  private startWatching(): void {
-    if (!this.filePath || !existsSync(this.filePath)) return;
+  private startWatching(match: SessionFileMatch): void {
+    this.filePath = match.path;
+    if (!existsSync(this.filePath)) return;
 
-    // Skip existing content
-    this.bytesRead = statSync(this.filePath).size;
-    // Watching starts from current file position (skip existing content)
+    if (match.vendorSessionId && match.vendorSessionId !== this.vendorSessionId) {
+      this.vendorSessionId = match.vendorSessionId;
+      this.onVendorSessionId?.(match.vendorSessionId);
+    }
+
+    this.bytesRead = match.readFromStart ? 0 : statSync(this.filePath).size;
 
     try {
       this.watcher = watch(this.filePath, () => {
@@ -81,6 +107,10 @@ export class SessionWatcher {
       this.pollTimer = setInterval(() => {
         if (!this.stopped) this.readNewLines();
       }, 300);
+    }
+
+    if (match.readFromStart) {
+      this.readNewLines();
     }
   }
 
@@ -123,7 +153,7 @@ export class SessionWatcher {
 
     if (type === 'user') {
       const content = this.extractClaudeContent(obj);
-      if (content && !this.seenContent.has(content.trim())) {
+      if (content && !this.consumePendingSent(content)) {
         this.createMessage('user', content);
       }
     } else if (type === 'assistant') {
@@ -161,7 +191,7 @@ export class SessionWatcher {
 
       if (evtType === 'user_message') {
         const content = (payload.message as string) ?? '';
-        if (content.trim() && !this.seenContent.has(content.trim())) {
+        if (content.trim() && !this.consumePendingSent(content)) {
           this.createMessage('user', content.trim());
         }
       } else if (evtType === 'agent_message') {
@@ -188,21 +218,45 @@ export class SessionWatcher {
 
   // ── File discovery ──
 
-  private findSessionFile(cwd: string): string | null {
+  private consumePendingSent(content: string): boolean {
+    const normalized = normalizeContent(content);
+    const count = this.pendingSentContent.get(normalized) ?? 0;
+    if (count <= 0) return false;
+
+    if (count === 1) {
+      this.pendingSentContent.delete(normalized);
+    } else {
+      this.pendingSentContent.set(normalized, count - 1);
+    }
+    return true;
+  }
+
+  private findSessionFile(cwd: string): SessionFileMatch | null {
     if (this.agent === 'claude') {
       return this.findClaudeSessionFile(cwd);
-    } else {
-      return this.findCodexSessionFile(cwd);
     }
+    return this.findCodexSessionFile(cwd);
   }
 
-  private findClaudeSessionFile(cwd: string): string | null {
+  private findClaudeSessionFile(cwd: string): SessionFileMatch | null {
     const encoded = cwd.replace(/[/_]/g, '-');
     const dir = join(homedir(), '.claude', 'projects', encoded);
-    return this.findLatestJsonl(dir);
+
+    if (this.vendorSessionId) {
+      const exactPath = join(dir, `${this.vendorSessionId}.jsonl`);
+      if (existsSync(exactPath)) {
+        return {
+          path: exactPath,
+          readFromStart: false,
+          vendorSessionId: this.vendorSessionId,
+        };
+      }
+    }
+
+    return this.findRecentJsonl(dir);
   }
 
-  private findCodexSessionFile(cwd: string): string | null {
+  private findCodexSessionFile(cwd: string): SessionFileMatch | null {
     // Codex stores sessions by date: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
     // We find the most recent one whose session_meta.cwd matches our CWD
     const sessionsRoot = join(homedir(), '.codex', 'sessions');
@@ -232,13 +286,21 @@ export class SessionWatcher {
 
             // Check if any file's session_meta.cwd matches
             for (const file of files) {
-              if (this.codexSessionMatchesCwd(file.path, cwd)) {
-                return file.path;
+              const match = this.codexSessionMatchesCwd(file.path, cwd);
+              if (!match) continue;
+
+              const readFromStart = !this.vendorSessionId && file.mtime >= this.startedAtMs;
+              if (this.vendorSessionId && match.vendorSessionId !== this.vendorSessionId) {
+                continue;
               }
+
+              return {
+                path: file.path,
+                readFromStart,
+                vendorSessionId: match.vendorSessionId,
+              };
             }
           }
-          // Only check the most recent day with files
-          return null;
         }
       }
     } catch {
@@ -247,33 +309,82 @@ export class SessionWatcher {
     return null;
   }
 
-  private codexSessionMatchesCwd(filePath: string, cwd: string): boolean {
+  private codexSessionMatchesCwd(
+    filePath: string,
+    cwd: string,
+  ): { vendorSessionId?: string } | null {
     try {
       // Read just the first line (session_meta)
       const content = readFileSync(filePath, 'utf-8');
       const firstLine = content.split('\n')[0];
-      if (!firstLine) return false;
+      if (!firstLine) return null;
 
       const obj = JSON.parse(firstLine);
-      if (obj.type !== 'session_meta') return false;
+      if (obj.type !== 'session_meta') return null;
 
       const sessionCwd = obj.payload?.cwd as string;
-      return sessionCwd === cwd;
+      if (sessionCwd !== cwd) return null;
+
+      const vendorSessionId = extractCodexVendorSessionId(obj);
+      return { vendorSessionId };
     } catch {
-      return false;
+      return null;
     }
   }
 
-  private findLatestJsonl(dir: string): string | null {
+  private findRecentJsonl(dir: string): SessionFileMatch | null {
     if (!existsSync(dir)) return null;
     try {
       const files = readdirSync(dir)
         .filter((f) => f.endsWith('.jsonl'))
         .map((f) => ({ path: join(dir, f), mtime: statSync(join(dir, f)).mtimeMs }))
         .sort((a, b) => b.mtime - a.mtime);
-      return files[0]?.path ?? null;
+
+      if (files.length === 0) return null;
+
+      if (this.vendorSessionId) {
+        const exact = files.find((file) => basename(file.path, '.jsonl') === this.vendorSessionId);
+        if (!exact) return null;
+        return {
+          path: exact.path,
+          readFromStart: false,
+          vendorSessionId: basename(exact.path, '.jsonl'),
+        };
+      }
+
+      const recent = files.find((file) => file.mtime >= this.startedAtMs);
+      if (!recent) return null;
+
+      return {
+        path: recent.path,
+        readFromStart: true,
+        vendorSessionId: basename(recent.path, '.jsonl'),
+      };
     } catch {
       return null;
     }
   }
+}
+
+function normalizeContent(content: string): string {
+  return content.trim();
+}
+
+function extractCodexVendorSessionId(obj: Record<string, unknown>): string | undefined {
+  const payload = obj.payload as Record<string, unknown> | undefined;
+  const candidates = [
+    payload?.sessionId,
+    payload?.session_id,
+    payload?.threadId,
+    payload?.thread_id,
+    (payload?.thread as Record<string, unknown> | undefined)?.id,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate) {
+      return candidate;
+    }
+  }
+
+  return undefined;
 }
