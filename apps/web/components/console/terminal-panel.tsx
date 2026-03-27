@@ -322,7 +322,34 @@ export function TerminalPanel() {
       if (event.type === 'pty.exit') {
         const inst = termsRef.current.get(event.sessionId);
         if (inst) {
-          inst.term.writeln('\r\n\x1b[33m[Process exited]\x1b[0m');
+          // Only show exit message if there was no error (normal exit)
+          // Error exits (e.g. attach to dead PTY) should auto-restart
+          if (event.error && event.sessionId === activeSessionRef.current) {
+            // PTY not running (e.g. server restarted). Auto-restart it.
+            inst.isNew = true;
+            inst.restoredFromSnapshot = false;
+            const session = useRoomStore.getState().sessions.find((s: any) => s.id === event.sessionId);
+            const currentRoom = useRoomStore.getState().room;
+            if (session && currentRoom) {
+              const cwd = typeof session.metadata?.worktreePath === 'string'
+                ? session.metadata.worktreePath
+                : currentRoom.repoPath;
+              inst.term.writeln('\x1b[90m[Reconnecting...]\x1b[0m');
+              wsClient.send({
+                type: 'pty.start',
+                sessionId: event.sessionId,
+                roomId: currentRoom.id,
+                agent: session.agent,
+                cwd,
+                cols: inst.term.cols,
+                rows: inst.term.rows,
+              } as any);
+              inst.isNew = false;
+            }
+          } else if (!event.error) {
+            inst.term.writeln('\r\n\x1b[33m[Process exited]\x1b[0m');
+            inst.isNew = true;
+          }
           scheduleSnapshotPersist(event.sessionId);
         }
       }
