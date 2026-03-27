@@ -2,6 +2,9 @@
 
 import { useState, useCallback, useRef, type ReactNode, type MouseEvent } from 'react';
 
+const PANEL_RESIZE_START = 'control-room:panel-resize-start';
+const PANEL_RESIZE_END = 'control-room:panel-resize-end';
+
 interface ResizablePanelsProps {
   left: ReactNode;
   center: ReactNode;
@@ -45,12 +48,14 @@ export function ResizablePanels({
           document.removeEventListener('mouseup', onMouseUp);
           document.body.style.cursor = '';
           document.body.style.userSelect = '';
+          window.dispatchEvent(new CustomEvent(PANEL_RESIZE_END));
         };
 
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
+        window.dispatchEvent(new CustomEvent(PANEL_RESIZE_START));
       },
     [leftWidth, rightWidth, minWidth],
   );

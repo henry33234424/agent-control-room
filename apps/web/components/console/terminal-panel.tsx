@@ -9,12 +9,17 @@ import { api } from '@/lib/api-client';
 let Terminal: any = null;
 let FitAddon: any = null;
 
+const PANEL_RESIZE_START = 'control-room:panel-resize-start';
+const PANEL_RESIZE_END = 'control-room:panel-resize-end';
+
 interface TermInstance {
   term: any;
   fitAddon: any;
   container: HTMLDivElement;
   sessionId: string;
   isNew: boolean;
+  lastReportedCols?: number;
+  lastReportedRows?: number;
 }
 
 export function TerminalPanel() {
@@ -25,6 +30,8 @@ export function TerminalPanel() {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const termsRef = useRef<Map<string, TermInstance>>(new Map());
   const activeSessionRef = useRef<string | null>(null);
+  const panelDraggingRef = useRef(false);
+  const resizeRafRef = useRef<number | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [selectedText, setSelectedText] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
@@ -86,11 +93,47 @@ export function TerminalPanel() {
       setSelectedText(sel && sel.trim() ? sel.trim() : null);
     });
 
-    const inst: TermInstance = { term, fitAddon, container, sessionId, isNew: true };
+    const inst: TermInstance = {
+      term,
+      fitAddon,
+      container,
+      sessionId,
+      isNew: true,
+    };
     termsRef.current.set(sessionId, inst);
 
     return inst;
   }, [loaded]);
+
+  const syncTerminalSize = useCallback((
+    sessionId: string,
+    options?: { notifyPty?: boolean; force?: boolean },
+  ) => {
+    const inst = termsRef.current.get(sessionId);
+    if (!inst) return;
+
+    inst.fitAddon.fit();
+
+    const cols = inst.term.cols;
+    const rows = inst.term.rows;
+    if (!options?.notifyPty || cols <= 0 || rows <= 0) {
+      return;
+    }
+
+    if (!options.force && inst.lastReportedCols === cols && inst.lastReportedRows === rows) {
+      return;
+    }
+
+    inst.lastReportedCols = cols;
+    inst.lastReportedRows = rows;
+
+    wsClient.send({
+      type: 'pty.resize',
+      sessionId,
+      cols,
+      rows,
+    } as any);
+  }, []);
 
   // Switch visible terminal when selected session changes
   useEffect(() => {
@@ -108,11 +151,11 @@ export function TerminalPanel() {
     const inst = getOrCreateTerm(selectedSessionId);
     if (!inst) return;
     inst.container.style.display = 'block';
-    inst.fitAddon.fit();
 
     // Only send pty.start for NEW terminal instances (first time seeing this session).
     // Switching back to an existing terminal just shows it — no pty.start, no buffer replay.
     activeSessionRef.current = selectedSessionId;
+    syncTerminalSize(selectedSessionId, { notifyPty: false, force: true });
 
     if (inst.isNew) {
       inst.isNew = false;
@@ -131,11 +174,14 @@ export function TerminalPanel() {
         cols: inst.term.cols,
         rows: inst.term.rows,
       } as any);
+      inst.lastReportedCols = inst.term.cols;
+      inst.lastReportedRows = inst.term.rows;
     } else {
       // Re-attach WS to existing PTY (without buffer replay) so input works
       wsClient.send({ type: 'pty.attach', sessionId: selectedSessionId } as any);
+      syncTerminalSize(selectedSessionId, { notifyPty: true });
     }
-  }, [loaded, selectedSessionId, sessions, room, getOrCreateTerm]);
+  }, [loaded, selectedSessionId, sessions, room, getOrCreateTerm, syncTerminalSize]);
 
   // Listen for PTY output — route to correct terminal
   useEffect(() => {
@@ -166,37 +212,56 @@ export function TerminalPanel() {
       const activeId = activeSessionRef.current;
       if (!activeId) return;
       wsClient.send({ type: 'pty.attach', sessionId: activeId } as any);
+      syncTerminalSize(activeId, { notifyPty: true });
     });
-  }, [loaded]);
+  }, [loaded, syncTerminalSize]);
 
-  // Resize observer — debounced, resizes the active terminal
+  useEffect(() => {
+    const handleResizeStart = () => {
+      panelDraggingRef.current = true;
+    };
+    const handleResizeEnd = () => {
+      panelDraggingRef.current = false;
+      const activeId = activeSessionRef.current;
+      if (!activeId) return;
+      syncTerminalSize(activeId, { notifyPty: true, force: true });
+    };
+
+    window.addEventListener(PANEL_RESIZE_START, handleResizeStart);
+    window.addEventListener(PANEL_RESIZE_END, handleResizeEnd);
+
+    return () => {
+      window.removeEventListener(PANEL_RESIZE_START, handleResizeStart);
+      window.removeEventListener(PANEL_RESIZE_END, handleResizeEnd);
+    };
+  }, [syncTerminalSize]);
+
+  // Resize observer — fit locally on the next frame so the canvas does not
+  // appear stretched during sidebar drag. Only commit the PTY resize when
+  // we're not in an active panel drag; the final authoritative resize is sent
+  // once the drag ends.
   useEffect(() => {
     if (!loaded || !wrapperRef.current) return;
 
-    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     const observer = new ResizeObserver(() => {
-      if (resizeTimer) clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
+      if (resizeRafRef.current !== null) return;
+      resizeRafRef.current = window.requestAnimationFrame(() => {
+        resizeRafRef.current = null;
         const activeId = activeSessionRef.current;
         if (!activeId) return;
-        const inst = termsRef.current.get(activeId);
-        if (!inst) return;
-        inst.fitAddon.fit();
-        wsClient.send({
-          type: 'pty.resize',
-          sessionId: activeId,
-          cols: inst.term.cols,
-          rows: inst.term.rows,
-        } as any);
-      }, 300);
+        syncTerminalSize(activeId, { notifyPty: !panelDraggingRef.current });
+      });
     });
     observer.observe(wrapperRef.current);
 
     return () => {
       observer.disconnect();
-      if (resizeTimer) clearTimeout(resizeTimer);
+      if (resizeRafRef.current !== null) {
+        window.cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = null;
+      }
     };
-  }, [loaded]);
+  }, [loaded, syncTerminalSize]);
 
   // Re-fit terminal when browser tab becomes visible again
   useEffect(() => {
@@ -207,27 +272,23 @@ export function TerminalPanel() {
       // Re-fit all visible terminals after tab switch
       const activeId = activeSessionRef.current;
       if (!activeId) return;
-      const inst = termsRef.current.get(activeId);
-      if (!inst) return;
       // Small delay to let the browser finish layout
       setTimeout(() => {
-        inst.fitAddon.fit();
-        wsClient.send({
-          type: 'pty.resize',
-          sessionId: activeId,
-          cols: inst.term.cols,
-          rows: inst.term.rows,
-        } as any);
+        syncTerminalSize(activeId, { notifyPty: true, force: true });
       }, 100);
     };
 
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, [loaded]);
+  }, [loaded, syncTerminalSize]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      if (resizeRafRef.current !== null) {
+        window.cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = null;
+      }
       for (const inst of termsRef.current.values()) {
         inst.term.dispose();
         inst.container.remove();
