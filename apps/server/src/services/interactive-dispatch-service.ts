@@ -84,12 +84,9 @@ export class InteractiveDispatchService {
       // Wait for CLI to be ready before sending prompt
       await ptyManager.waitUntilReady(target.sessionId);
 
-      await ptyManager.dispatchPrompt({
-        roomId,
+      ptyManager.dispatchPrompt({
         sessionId: target.sessionId,
-        agent: target.agent,
         prompt: target.prompt,
-        replyToMessageId,
       });
     }
   }
