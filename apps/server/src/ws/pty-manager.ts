@@ -36,6 +36,7 @@ class PtyManager {
     args: string[];
     cwd: string;
     vendorSessionId?: string;
+    skipReplay?: boolean;
     ws?: WebSocket | null;
     cols?: number;
     rows?: number;
@@ -55,8 +56,15 @@ class PtyManager {
         existing.ws = input.ws;
         // Replay buffer first, then let frontend's debounced ResizeObserver handle resize later.
         // Don't resize here — it causes TUI to redraw and clear the replayed content.
-        if (existing.buffer && input.ws.readyState === 1) {
+        if (!input.skipReplay && existing.buffer && input.ws.readyState === 1) {
           input.ws.send(JSON.stringify({ type: 'pty.output', sessionId: input.sessionId, data: existing.buffer }));
+        }
+        if (input.ws.readyState === 1) {
+          input.ws.send(JSON.stringify({
+            type: 'pty.started',
+            sessionId: input.sessionId,
+            restored: true,
+          }));
         }
       }
       return;
@@ -95,6 +103,13 @@ class PtyManager {
 
     this.sessions.set(input.sessionId, session);
     session.watcher.start(input.cwd, input.vendorSessionId);
+    if (session.ws?.readyState === 1) {
+      session.ws.send(JSON.stringify({
+        type: 'pty.started',
+        sessionId: input.sessionId,
+        restored: false,
+      }));
+    }
 
     // PTY output → WebSocket (for terminal display)
     ptyProcess.onData((data: string) => {

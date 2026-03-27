@@ -20,6 +20,15 @@ interface TermInstance {
   isNew: boolean;
   lastReportedCols?: number;
   lastReportedRows?: number;
+  snapshotTimer: ReturnType<typeof setTimeout> | null;
+  restoredFromSnapshot: boolean;
+}
+
+interface TerminalSnapshot {
+  cols: number;
+  rows: number;
+  lines: string[];
+  capturedAt: number;
 }
 
 export function TerminalPanel() {
@@ -36,6 +45,31 @@ export function TerminalPanel() {
   const [selectedText, setSelectedText] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
 
+  const getSnapshotKey = useCallback((sessionId: string) => {
+    if (!room?.id) return null;
+    return `control-room:terminal-snapshot:${room.id}:${sessionId}`;
+  }, [room?.id]);
+
+  const readSnapshot = useCallback((sessionId: string): TerminalSnapshot | null => {
+    const key = getSnapshotKey(sessionId);
+    if (!key || typeof window === 'undefined') return null;
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as TerminalSnapshot;
+      if (!Array.isArray(parsed.lines)) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }, [getSnapshotKey]);
+
+  const clearSnapshot = useCallback((sessionId: string) => {
+    const key = getSnapshotKey(sessionId);
+    if (!key || typeof window === 'undefined') return;
+    window.localStorage.removeItem(key);
+  }, [getSnapshotKey]);
+
   // Load xterm dynamically
   useEffect(() => {
     Promise.all([
@@ -46,6 +80,18 @@ export function TerminalPanel() {
       FitAddon = fitMod.FitAddon;
       setLoaded(true);
     });
+  }, []);
+
+  const restoreSnapshot = useCallback((inst: Pick<TermInstance, 'term'>, snapshot: TerminalSnapshot | null) => {
+    if (!snapshot || snapshot.lines.length === 0) return false;
+
+    inst.term.reset();
+
+    const content = snapshot.lines.join('\r\n');
+    if (content) {
+      inst.term.write(content);
+    }
+    return true;
   }, []);
 
   // Create or get a Terminal instance for a session
@@ -63,11 +109,15 @@ export function TerminalPanel() {
     container.style.padding = '4px';
     wrapperRef.current.appendChild(container);
 
+    const snapshot = readSnapshot(sessionId);
+
     // Create terminal
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
       fontFamily: "'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace",
+      cols: snapshot?.cols,
+      rows: snapshot?.rows,
       theme: {
         background: '#0a0e14',
         foreground: '#e6e6e6',
@@ -81,6 +131,7 @@ export function TerminalPanel() {
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(container);
+    const restoredFromSnapshot = restoreSnapshot({ term }, snapshot);
 
     // Forward input to PTY
     term.onData((data: string) => {
@@ -99,11 +150,45 @@ export function TerminalPanel() {
       container,
       sessionId,
       isNew: true,
+      snapshotTimer: null,
+      restoredFromSnapshot,
     };
     termsRef.current.set(sessionId, inst);
 
     return inst;
-  }, [loaded]);
+  }, [loaded, readSnapshot, restoreSnapshot]);
+
+  const persistSnapshot = useCallback((sessionId: string) => {
+    const inst = termsRef.current.get(sessionId);
+    const key = getSnapshotKey(sessionId);
+    if (!inst || !key || typeof window === 'undefined') return;
+
+    const buffer = inst.term.buffer.active;
+    const start = buffer.viewportY;
+    const lines: string[] = [];
+    for (let i = 0; i < inst.term.rows; i += 1) {
+      const line = buffer.getLine(start + i);
+      lines.push(line ? line.translateToString(true) : '');
+    }
+
+    const snapshot: TerminalSnapshot = {
+      cols: inst.term.cols,
+      rows: inst.term.rows,
+      lines,
+      capturedAt: Date.now(),
+    };
+    window.localStorage.setItem(key, JSON.stringify(snapshot));
+  }, [getSnapshotKey]);
+
+  const scheduleSnapshotPersist = useCallback((sessionId: string) => {
+    const inst = termsRef.current.get(sessionId);
+    if (!inst) return;
+    if (inst.snapshotTimer) clearTimeout(inst.snapshotTimer);
+    inst.snapshotTimer = setTimeout(() => {
+      inst.snapshotTimer = null;
+      persistSnapshot(sessionId);
+    }, 120);
+  }, [persistSnapshot]);
 
   const syncTerminalSize = useCallback((
     sessionId: string,
@@ -126,6 +211,7 @@ export function TerminalPanel() {
 
     inst.lastReportedCols = cols;
     inst.lastReportedRows = rows;
+    scheduleSnapshotPersist(sessionId);
 
     wsClient.send({
       type: 'pty.resize',
@@ -133,7 +219,7 @@ export function TerminalPanel() {
       cols,
       rows,
     } as any);
-  }, []);
+  }, [scheduleSnapshotPersist]);
 
   // Switch visible terminal when selected session changes
   useEffect(() => {
@@ -171,6 +257,7 @@ export function TerminalPanel() {
         roomId: room.id,
         agent: session.agent,
         cwd: workingDirectory,
+        skipReplay: inst.restoredFromSnapshot,
         cols: inst.term.cols,
         rows: inst.term.rows,
       } as any);
@@ -192,18 +279,34 @@ export function TerminalPanel() {
         const inst = termsRef.current.get(event.sessionId);
         if (inst) {
           inst.term.write(event.data);
+          inst.restoredFromSnapshot = false;
+          scheduleSnapshotPersist(event.sessionId);
+        }
+      }
+      if (event.type === 'pty.started') {
+        const inst = termsRef.current.get(event.sessionId);
+        if (!inst) return;
+
+        if (event.restored === false) {
+          clearSnapshot(event.sessionId);
+          if (inst.restoredFromSnapshot) {
+            inst.term.reset();
+            inst.fitAddon.fit();
+          }
+          inst.restoredFromSnapshot = false;
         }
       }
       if (event.type === 'pty.exit') {
         const inst = termsRef.current.get(event.sessionId);
         if (inst) {
           inst.term.writeln('\r\n\x1b[33m[Process exited]\x1b[0m');
+          scheduleSnapshotPersist(event.sessionId);
         }
       }
     });
 
     return unsub;
-  }, [loaded]);
+  }, [loaded, clearSnapshot, scheduleSnapshotPersist]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -284,18 +387,36 @@ export function TerminalPanel() {
 
   // Cleanup on unmount
   useEffect(() => {
+    const persistAllSnapshots = () => {
+      for (const inst of termsRef.current.values()) {
+        if (inst.snapshotTimer) {
+          clearTimeout(inst.snapshotTimer);
+          inst.snapshotTimer = null;
+        }
+        persistSnapshot(inst.sessionId);
+      }
+    };
+
+    window.addEventListener('pagehide', persistAllSnapshots);
+
     return () => {
+      window.removeEventListener('pagehide', persistAllSnapshots);
       if (resizeRafRef.current !== null) {
         window.cancelAnimationFrame(resizeRafRef.current);
         resizeRafRef.current = null;
       }
       for (const inst of termsRef.current.values()) {
+        if (inst.snapshotTimer) {
+          clearTimeout(inst.snapshotTimer);
+          inst.snapshotTimer = null;
+        }
+        persistSnapshot(inst.sessionId);
         inst.term.dispose();
         inst.container.remove();
       }
       termsRef.current.clear();
     };
-  }, []);
+  }, [persistSnapshot]);
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
   const activeSession = sessions.find((s) => s.id === activeSessionRef.current);
