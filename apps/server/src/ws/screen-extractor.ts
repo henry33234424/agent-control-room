@@ -63,18 +63,10 @@ export class ScreenExtractor {
     }
     this.lastContentHash = currentContent;
 
-    // Strategy 1: extract Claude's ⏺-marked agent response blocks
-    let agentContent = extractAgentBlocks(currentLines);
+    // Extract agent blocks marked with ⏺ (Claude) or · (Codex)
+    const agentContent = extractAgentBlocks(currentLines);
 
-    // Strategy 2: if no ⏺ blocks found (Codex or other), fall back to all meaningful lines
-    if (!agentContent) {
-      agentContent = currentLines
-        .map((l) => l.trimEnd())
-        .filter((l) => isMeaningfulLine(l))
-        .join('\n');
-    }
-
-    if (agentContent === this.lastAgentContent) {
+    if (!agentContent || agentContent === this.lastAgentContent) {
       return '';
     }
 
@@ -88,10 +80,13 @@ export class ScreenExtractor {
 }
 
 /**
- * Extract Claude agent response blocks from screen lines.
- * Claude marks agent output with ⏺ at the beginning.
- * Content continues until the next prompt (❯), separator (───), or TUI chrome.
+ * Agent block marker patterns:
+ * - Claude: ⏺ at the start of a line
+ * - Codex: · at the start of a line (but not inside indented sub-blocks)
  */
+const BLOCK_START = /^[⏺·]\s/;
+const BLOCK_END = /^[❯>]\s|^[─━═]{3,}|^gpt-|^>_\s/;
+
 function extractAgentBlocks(lines: string[]): string {
   const blocks: string[] = [];
   let inBlock = false;
@@ -101,14 +96,12 @@ function extractAgentBlocks(lines: string[]): string {
     const line = rawLine.trimEnd();
     const trimmed = line.trim();
 
-    // Start of agent block: line begins with ⏺
-    if (/^⏺/.test(trimmed)) {
-      // Save previous block if any
+    // Start of agent block
+    if (BLOCK_START.test(trimmed)) {
       if (currentBlock.length > 0) {
         blocks.push(currentBlock.join('\n'));
       }
-      // Start new block with content after ⏺
-      const content = trimmed.replace(/^⏺\s*/, '').trim();
+      const content = trimmed.replace(/^[⏺·]\s*/, '').trim();
       currentBlock = content ? [content] : [];
       inBlock = true;
       continue;
@@ -116,15 +109,19 @@ function extractAgentBlocks(lines: string[]): string {
 
     if (!inBlock) continue;
 
-    // End of block: prompt line, separator, or TUI chrome
-    if (/^❯/.test(trimmed)) { inBlock = false; continue; }
-    if (/^[─━═]{3,}/.test(trimmed)) { inBlock = false; continue; }
+    // End of block
+    if (BLOCK_END.test(trimmed)) { inBlock = false; continue; }
     if (!isMeaningfulLine(line)) continue;
+
+    // Sub-block markers (indented · in Codex)
+    if (/^\s+·\s/.test(line)) {
+      currentBlock.push(trimmed.replace(/^·\s*/, '- '));
+      continue;
+    }
 
     currentBlock.push(trimmed);
   }
 
-  // Don't forget the last block
   if (currentBlock.length > 0) {
     blocks.push(currentBlock.join('\n'));
   }
@@ -185,14 +182,28 @@ function isMeaningfulLine(line: string): boolean {
   // Lines that are just a single symbol/emoji with nothing else
   if (/^[⏺⏹⏸▶⏵⏯⏮⏭]\s*$/.test(trimmed)) return false;
 
-  // Terminal color query responses (RGB values)
-  if (/^\d+;rgb:[0-9a-f]{4}\/[0-9a-f]{4}\/[0-9a-f]{4}/i.test(trimmed)) return false;
-  if (/^rgb:[0-9a-f]{4}\/[0-9a-f]{4}\/[0-9a-f]{4}/i.test(trimmed)) return false;
+  // Terminal color query responses (RGB values) — any line containing rgb: patterns
+  if (/rgb:[0-9a-f]{2,4}\/[0-9a-f]{2,4}\/[0-9a-f]{2,4}/i.test(trimmed)) return false;
+  if (/^\d+;rgb:/i.test(trimmed)) return false;
 
   // Codex TUI chrome
-  if (/^gpt-.*xhigh.*left/i.test(trimmed)) return false;
+  if (/^>_\s+OpenAI\s+Codex/i.test(trimmed)) return false;
+  if (/^gpt-/i.test(trimmed)) return false;
+  if (/^model:/i.test(trimmed)) return false;
+  if (/^directory:/i.test(trimmed)) return false;
+  if (/^Tip:\s+/i.test(trimmed)) return false;
+  if (/\/fast\s+to\s+enable/i.test(trimmed)) return false;
+  if (/\/model\s+to\s+change/i.test(trimmed)) return false;
   if (/Write\s+tests\s+for\s+@filename/i.test(trimmed)) return false;
+  if (/Find\s+and\s+fix\s+a\s+bug\s+in\s+@filename/i.test(trimmed)) return false;
   if (/^\d+%\s+left/i.test(trimmed)) return false;
+  if (/xhigh/i.test(trimmed) && /left/i.test(trimmed)) return false;
+
+  // Handoff context echo (should not appear as agent reply)
+  if (/^\[Control\s+Room\s+Context\]/i.test(trimmed)) return false;
+  if (/^\[New\s+Instruction\]/i.test(trimmed)) return false;
+  if (/^The\s+following\s+transcript\s+was\s+explicitly\s+selected/i.test(trimmed)) return false;
+  if (/^\[agent\s+\(/i.test(trimmed)) return false;
 
   return true;
 }
