@@ -65,7 +65,7 @@ export function MessageList() {
                   {new Date(msg.createdAt).toLocaleTimeString('en-US', { hour12: false })}
                 </span>
               </div>
-              <div className="text-gray-200 prose prose-invert prose-sm max-w-none break-words">
+              <div className="text-gray-200 prose prose-invert prose-sm max-w-none" style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
                 <Markdown>{msg.content}</Markdown>
               </div>
             </div>

@@ -63,19 +63,23 @@ export class ScreenExtractor {
     }
     this.lastContentHash = currentContent;
 
-    // Strategy: extract Claude's agent response blocks.
-    // Claude TUI marks agent output with ⏺ at the start of the block.
-    // We find all content between ⏺ markers and the next prompt (❯) or separator (───).
-    const agentContent = extractAgentBlocks(currentLines);
+    // Strategy 1: extract Claude's ⏺-marked agent response blocks
+    let agentContent = extractAgentBlocks(currentLines);
+
+    // Strategy 2: if no ⏺ blocks found (Codex or other), fall back to all meaningful lines
+    if (!agentContent) {
+      agentContent = currentLines
+        .map((l) => l.trimEnd())
+        .filter((l) => isMeaningfulLine(l))
+        .join('\n');
+    }
 
     if (agentContent === this.lastAgentContent) {
       return '';
     }
 
-    const delta = agentContent;
     this.lastAgentContent = agentContent;
-
-    return delta;
+    return agentContent;
   }
 
   dispose(): void {
@@ -180,6 +184,15 @@ function isMeaningfulLine(line: string): boolean {
 
   // Lines that are just a single symbol/emoji with nothing else
   if (/^[⏺⏹⏸▶⏵⏯⏮⏭]\s*$/.test(trimmed)) return false;
+
+  // Terminal color query responses (RGB values)
+  if (/^\d+;rgb:[0-9a-f]{4}\/[0-9a-f]{4}\/[0-9a-f]{4}/i.test(trimmed)) return false;
+  if (/^rgb:[0-9a-f]{4}\/[0-9a-f]{4}\/[0-9a-f]{4}/i.test(trimmed)) return false;
+
+  // Codex TUI chrome
+  if (/^gpt-.*xhigh.*left/i.test(trimmed)) return false;
+  if (/Write\s+tests\s+for\s+@filename/i.test(trimmed)) return false;
+  if (/^\d+%\s+left/i.test(trimmed)) return false;
 
   return true;
 }
