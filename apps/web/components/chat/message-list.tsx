@@ -12,6 +12,7 @@ const ROLE_STYLES: Record<string, string> = {
   review: 'bg-purple-900/30 border-purple-800',
   approval: 'bg-yellow-900/30 border-yellow-800',
   'handoff-summary': 'bg-green-900/30 border-green-800',
+  excerpt: 'bg-amber-900/30 border-amber-800',
 };
 
 const AGENT_LABELS: Record<string, string> = {
@@ -35,7 +36,7 @@ export function MessageList() {
     <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2">
       {messages.length === 0 ? (
         <div className="text-gray-600 text-center mt-8 text-sm">
-          No messages yet. Use @Claude or @Codex to start.
+          No context items yet. Send prompts with @Claude/@Codex, or capture text from the terminal.
         </div>
       ) : (
         messages.map((msg) => (

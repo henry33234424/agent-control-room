@@ -84,9 +84,6 @@ export class InteractiveDispatchService {
       // Wait for CLI to be ready before sending prompt
       await ptyManager.waitUntilReady(target.sessionId);
 
-      // Mark the prompt content as already sent (dedup for SessionWatcher)
-      ptyManager.markSent(target.sessionId, target.prompt);
-
       ptyManager.dispatchPrompt({
         sessionId: target.sessionId,
         prompt: target.prompt,

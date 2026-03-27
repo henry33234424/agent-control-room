@@ -12,6 +12,7 @@ import { approvalRoutes } from './routes/approvals.js';
 import { pinRoutes } from './routes/pins.js';
 import { handoffRoutes } from './routes/handoffs.js';
 import { reviewRoutes } from './routes/reviews.js';
+import { excerptRoutes } from './routes/excerpts.js';
 import { registerWebSocket } from './ws/handler.js';
 import { orchestrator } from './orchestrator/room-orchestrator.js';
 import { ClaudeCLIAdapter } from './adapters/cli/claude-cli-adapter.js';
@@ -43,6 +44,7 @@ async function main() {
   await app.register(pinRoutes);
   await app.register(handoffRoutes);
   await app.register(reviewRoutes);
+  await app.register(excerptRoutes);
 
   // WebSocket
   await registerWebSocket(app);

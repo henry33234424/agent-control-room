@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { wsClient } from '@/lib/ws-client';
 import { useRoomStore } from '@/stores/room-store';
 import { useUIStore } from '@/stores/ui-store';
+import { api } from '@/lib/api-client';
 
 let Terminal: any = null;
 let FitAddon: any = null;
@@ -25,6 +26,8 @@ export function TerminalPanel() {
   const termsRef = useRef<Map<string, TermInstance>>(new Map());
   const activeSessionRef = useRef<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [selectedText, setSelectedText] = useState<string | null>(null);
+  const [capturing, setCapturing] = useState(false);
 
   // Load xterm dynamically
   useEffect(() => {
@@ -75,6 +78,12 @@ export function TerminalPanel() {
     // Forward input to PTY
     term.onData((data: string) => {
       wsClient.send({ type: 'pty.input', sessionId, data } as any);
+    });
+
+    // Detect text selection for capture toolbar
+    term.onSelectionChange(() => {
+      const sel = term.getSelection();
+      setSelectedText(sel && sel.trim() ? sel.trim() : null);
     });
 
     const inst: TermInstance = { term, fitAddon, container, sessionId, isNew: true };
@@ -193,6 +202,42 @@ export function TerminalPanel() {
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
   const activeSession = sessions.find((s) => s.id === activeSessionRef.current);
 
+  const handleCapture = async (target: 'context' | 'brief' | 'claude' | 'codex') => {
+    if (!selectedText || !room || capturing) return;
+    setCapturing(true);
+    try {
+      if (target === 'context') {
+        // Create excerpt via dedicated API (no agent dispatch)
+        const activeAgent = activeSession?.agent;
+        await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3002'}/api/rooms/${room.id}/excerpts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: selectedText,
+            sourceAgent: activeAgent,
+            sourceSessionId: activeSessionRef.current,
+          }),
+        });
+      } else if (target === 'brief') {
+        await api.pins.create(room.id, { section: 'decisions', content: selectedText });
+      } else {
+        // Send to another agent
+        await api.messages.send(room.id, {
+          content: `@${target} ${selectedText}`,
+          mentionTarget: target,
+        });
+      }
+      setSelectedText(null);
+      // Clear selection in terminal
+      const inst = termsRef.current.get(activeSessionRef.current ?? '');
+      if (inst) inst.term.clearSelection();
+    } catch (err) {
+      console.error('Capture failed:', err);
+    } finally {
+      setCapturing(false);
+    }
+  };
+
   return (
     <div className="relative h-full bg-[#0a0e14]">
       <div ref={wrapperRef} className="absolute inset-0" />
@@ -212,6 +257,47 @@ export function TerminalPanel() {
             <div className="text-sm font-medium text-gray-200">{room.name}</div>
             <div className="mt-1 text-xs text-gray-500">Create or select a session from the left.</div>
           </div>
+        </div>
+      )}
+
+      {/* Capture toolbar — appears when text is selected */}
+      {selectedText && (
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 rounded-full border border-amber-700 bg-gray-950/95 px-4 py-2 shadow-2xl backdrop-blur">
+          <span className="text-xs text-amber-300 mr-1">Capture:</span>
+          <button
+            onClick={() => handleCapture('context')}
+            disabled={capturing}
+            className="px-2 py-1 text-xs bg-amber-700 text-white rounded hover:bg-amber-600 disabled:opacity-50 transition-colors"
+          >
+            To Context
+          </button>
+          <button
+            onClick={() => handleCapture('brief')}
+            disabled={capturing}
+            className="px-2 py-1 text-xs bg-blue-700 text-white rounded hover:bg-blue-600 disabled:opacity-50 transition-colors"
+          >
+            To Brief
+          </button>
+          <button
+            onClick={() => handleCapture('claude')}
+            disabled={capturing}
+            className="px-2 py-1 text-xs bg-purple-700 text-white rounded hover:bg-purple-600 disabled:opacity-50 transition-colors"
+          >
+            → Claude
+          </button>
+          <button
+            onClick={() => handleCapture('codex')}
+            disabled={capturing}
+            className="px-2 py-1 text-xs bg-green-700 text-white rounded hover:bg-green-600 disabled:opacity-50 transition-colors"
+          >
+            → Codex
+          </button>
+          <button
+            onClick={() => { setSelectedText(null); const inst = termsRef.current.get(activeSessionRef.current ?? ''); if (inst) inst.term.clearSelection(); }}
+            className="px-1 py-1 text-xs text-gray-400 hover:text-gray-200"
+          >
+            ✕
+          </button>
         </div>
       )}
 

@@ -6,7 +6,8 @@ export type ChatMessageRole =
   | 'system'
   | 'review'
   | 'approval'
-  | 'handoff-summary';
+  | 'handoff-summary'
+  | 'excerpt';
 
 export type MentionTarget = 'claude' | 'codex' | 'both';
 

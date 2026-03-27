@@ -13,7 +13,7 @@ export function ChatPanel() {
     <div className="flex flex-col h-full bg-gray-950">
       {/* Header */}
       <div className="p-3 border-b border-gray-800 bg-gray-900">
-        <h2 className="text-sm font-bold text-gray-200">Chat</h2>
+        <h2 className="text-sm font-bold text-gray-200">Context</h2>
         {room && <p className="text-xs text-gray-500 mt-0.5">{room.name}</p>}
       </div>
 

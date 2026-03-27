@@ -2,8 +2,6 @@ import { createRequire } from 'node:module';
 import type { WebSocket } from '@fastify/websocket';
 import type { AgentKind } from '@control-room/shared-types';
 import type { IPty } from 'node-pty';
-import { SessionWatcher } from './session-watcher.js';
-
 const require_ = createRequire(import.meta.url);
 const pty: { spawn: typeof import('node-pty').spawn } = require_('node-pty');
 
@@ -15,7 +13,6 @@ interface PtySession {
   roomId: string;
   buffer: string;
   detachTimer: NodeJS.Timeout | null;
-  sessionWatcher: SessionWatcher | null;
 }
 
 /**
@@ -72,14 +69,6 @@ class PtyManager {
       env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>,
     });
 
-    // Start session watcher for chat sync (Claude writes JSONL session files)
-    const watcher = new SessionWatcher({
-      roomId: input.roomId,
-      sessionId: input.sessionId,
-      agent: input.agent,
-    });
-    watcher.start(input.cwd);
-
     const session: PtySession = {
       ptyProcess,
       ws: input.ws ?? null,
@@ -88,7 +77,6 @@ class PtyManager {
       roomId: input.roomId,
       buffer: '',
       detachTimer: null,
-      sessionWatcher: watcher,
     };
 
     this.sessions.set(input.sessionId, session);
@@ -112,7 +100,6 @@ class PtyManager {
       if (session.detachTimer) {
         clearTimeout(session.detachTimer);
       }
-      session.sessionWatcher?.stop();
       this.sessions.delete(input.sessionId);
     });
   }
@@ -172,14 +159,6 @@ class PtyManager {
     }
   }
 
-  /**
-   * Mark a user message as already sent (for dedup in SessionWatcher).
-   */
-  markSent(sessionId: string, content: string): void {
-    const session = this.sessions.get(sessionId);
-    session?.sessionWatcher?.markSent(content);
-  }
-
   writeForSocket(ws: WebSocket, sessionId: string, data: string): void {
     const session = this.sessions.get(sessionId);
     if (session && session.ws === ws) {
@@ -207,7 +186,6 @@ class PtyManager {
       if (session.detachTimer) {
         clearTimeout(session.detachTimer);
       }
-      session.sessionWatcher?.stop();
       session.ptyProcess.kill();
       this.sessions.delete(sessionId);
     }
@@ -246,7 +224,14 @@ class PtyManager {
     if (!session) {
       throw new Error(`PTY session ${input.sessionId} is not running`);
     }
-    session.ptyProcess.write(`${input.prompt}\r`);
+    // Write prompt text, then send Enter after a small delay.
+    // Some TUIs (Codex) need the Enter sent separately.
+    session.ptyProcess.write(input.prompt);
+    setTimeout(() => {
+      if (this.sessions.has(input.sessionId)) {
+        session.ptyProcess.write('\r');
+      }
+    }, 100);
   }
 
   private appendBuffer(buffer: string, data: string): string {
@@ -266,7 +251,6 @@ class PtyManager {
       if (!current || current.ws) {
         return;
       }
-      current.sessionWatcher?.stop();
       current.ptyProcess.kill();
       this.sessions.delete(session.sessionId);
     }, this.detachTtlMs);
