@@ -81,6 +81,9 @@ export class InteractiveDispatchService {
         vendorSessionId: target.vendorSessionId,
       });
 
+      // Wait for CLI to be ready before sending prompt
+      await ptyManager.waitUntilReady(target.sessionId);
+
       await ptyManager.dispatchPrompt({
         roomId,
         sessionId: target.sessionId,
@@ -98,6 +101,7 @@ export class InteractiveDispatchService {
     cwd: string;
     vendorSessionId?: string;
   }): void {
+    console.log('[dispatch] ensurePtyStarted', input.sessionId, input.agent, input.cwd);
     if (ptyManager.has(input.sessionId)) {
       return;
     }

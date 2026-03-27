@@ -3,7 +3,8 @@
     "allow": [
       "Bash(pnpm --filter @control-room/server test)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(pnpm:*)"
     ]
   }
 }

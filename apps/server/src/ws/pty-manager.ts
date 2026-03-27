@@ -3,6 +3,7 @@ import type { WebSocket } from '@fastify/websocket';
 import type { AgentKind } from '@control-room/shared-types';
 import type { IPty } from 'node-pty';
 import { messageService } from '../services/message-service.js';
+import { ScreenExtractor } from './screen-extractor.js';
 
 // node-pty is a native module that must be loaded via require()
 const require_ = createRequire(import.meta.url);
@@ -34,6 +35,7 @@ interface PtySession {
   detachTimer: NodeJS.Timeout | null;
   replyTracking: ReplyTracking | null;
   inputBuffer: string;
+  screenExtractor: ScreenExtractor;
 }
 
 class PtyManager {
@@ -81,6 +83,9 @@ class PtyManager {
       env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>,
     });
 
+    const cols = input.cols ?? 120;
+    const rows = input.rows ?? 40;
+
     const session: PtySession = {
       ptyProcess,
       ws: input.ws ?? null,
@@ -91,6 +96,7 @@ class PtyManager {
       detachTimer: null,
       replyTracking: null,
       inputBuffer: '',
+      screenExtractor: new ScreenExtractor(cols, rows),
     };
 
     this.sessions.set(input.sessionId, session);
@@ -100,7 +106,9 @@ class PtyManager {
       if (session.ws?.readyState === 1) {
         session.ws.send(JSON.stringify({ type: 'pty.output', sessionId: input.sessionId, data }));
       }
-      this.handleTranscriptChunk(session, data);
+      // Feed into headless terminal for proper TUI processing
+      session.screenExtractor.write(data);
+      this.handleTranscriptChunk(session);
     });
 
     ptyProcess.onExit(({ exitCode }) => {
@@ -116,6 +124,34 @@ class PtyManager {
         clearTimeout(session.detachTimer);
       }
       this.sessions.delete(input.sessionId);
+    });
+  }
+
+  /**
+   * Wait until the PTY buffer contains a prompt indicator.
+   * Polls the buffer every 200ms instead of adding a second onData handler.
+   */
+  waitUntilReady(sessionId: string, timeoutMs = 15000): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return Promise.reject(new Error('PTY session not found'));
+
+    return new Promise<void>((resolve) => {
+      const checkReady = () => {
+        return session.buffer.includes('❯') || session.buffer.includes('> ');
+      };
+
+      if (checkReady()) {
+        resolve();
+        return;
+      }
+
+      const startTime = Date.now();
+      const interval = setInterval(() => {
+        if (checkReady() || Date.now() - startTime > timeoutMs) {
+          clearInterval(interval);
+          resolve();
+        }
+      }, 200);
     });
   }
 
@@ -142,6 +178,7 @@ class PtyManager {
     const session = this.sessions.get(sessionId);
     if (session) {
       session.ptyProcess.resize(cols, rows);
+      session.screenExtractor.resize(cols, rows);
     }
   }
 
@@ -162,6 +199,7 @@ class PtyManager {
         clearTimeout(session.replyTracking.flushTimer);
       }
       session.ptyProcess.kill();
+      session.screenExtractor.dispose();
       this.sessions.delete(sessionId);
     }
   }
@@ -273,24 +311,28 @@ class PtyManager {
     }, this.detachTtlMs);
   }
 
-  private handleTranscriptChunk(session: PtySession, rawData: string): void {
+  private handleTranscriptChunk(session: PtySession): void {
     const tracking = session.replyTracking;
     if (!tracking) return;
 
-    const sanitized = sanitizeTerminalText(rawData);
-    if (!sanitized) return;
+    // Use headless terminal to extract meaningful content
+    const delta = session.screenExtractor.extractDelta();
+    if (!delta) return;
 
-    const suppressed = suppressPromptEcho(sanitized, tracking.pendingEcho);
-    tracking.pendingEcho = suppressed.pendingEcho;
+    // Suppress prompt echo (the text the user just typed)
+    let text = delta;
+    if (tracking.pendingEcho) {
+      const idx = text.indexOf(tracking.pendingEcho);
+      if (idx !== -1) {
+        text = text.slice(idx + tracking.pendingEcho.length);
+        tracking.pendingEcho = '';
+      }
+    }
 
-    if (!suppressed.text) return;
+    text = text.trim();
+    if (!text) return;
 
-    const extracted = extractTranscriptDelta(tracking.pendingLine, suppressed.text);
-    tracking.pendingLine = extracted.pendingLine;
-
-    if (!extracted.text) return;
-
-    tracking.text += extracted.text;
+    tracking.text = text; // Replace with latest screen content (not accumulate)
     this.scheduleReplyFlush(session);
   }
 
@@ -299,7 +341,7 @@ class PtyManager {
     if (!tracking) return;
 
     if (tracking.flushTimer) {
-      clearTimeout(tracking.flushTimer);
+      return;
     }
 
     tracking.flushTimer = setTimeout(() => {
@@ -317,15 +359,14 @@ class PtyManager {
       return;
     }
 
-    const draftText = composeTranscriptDraft(tracking.text, tracking.pendingLine);
-    const normalizedText = draftText.trim();
+    const normalizedText = tracking.text.trim();
     if (!normalizedText || normalizedText === tracking.lastFlushedText) {
       return;
     }
 
     tracking.flushing = true;
     try {
-      const content = renderTranscriptMessage(draftText);
+      const content = renderTranscriptMessage(normalizedText);
       if (!tracking.messageId && tracking.replyToReady) {
         await tracking.replyToReady;
       }
@@ -365,11 +406,11 @@ class PtyManager {
       tracking.flushTimer = null;
     }
 
-    const tail = flushPendingTranscriptLine(tracking.pendingLine);
-    if (tail) {
-      tracking.text += tail;
+    // Do a final screen delta extraction before flushing
+    const finalDelta = session.screenExtractor.extractDelta();
+    if (finalDelta) {
+      tracking.text = finalDelta.trim() || tracking.text;
     }
-    tracking.pendingLine = '';
 
     if (session.replyTracking !== tracking) {
       return;
