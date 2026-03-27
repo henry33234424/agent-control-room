@@ -116,8 +116,8 @@ export function TerminalPanel() {
       cursorBlink: true,
       fontSize: 13,
       fontFamily: "'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace",
-      cols: snapshot?.cols,
-      rows: snapshot?.rows,
+      ...(snapshot?.cols ? { cols: snapshot.cols } : {}),
+      ...(snapshot?.rows ? { rows: snapshot.rows } : {}),
       theme: {
         background: '#0a0e14',
         foreground: '#e6e6e6',
