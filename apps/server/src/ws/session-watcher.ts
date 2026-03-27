@@ -70,6 +70,7 @@ export class SessionWatcher {
 
     // Skip existing content
     this.bytesRead = statSync(this.filePath).size;
+    // Watching starts from current file position (skip existing content)
 
     try {
       this.watcher = watch(this.filePath, () => {

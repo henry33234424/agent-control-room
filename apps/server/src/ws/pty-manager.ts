@@ -52,7 +52,8 @@ class PtyManager {
       }
       if (input.ws) {
         existing.ws = input.ws;
-        existing.ptyProcess.resize(input.cols ?? 120, input.rows ?? 40);
+        // Replay buffer first, then let frontend's debounced ResizeObserver handle resize later.
+        // Don't resize here — it causes TUI to redraw and clear the replayed content.
         if (existing.buffer && input.ws.readyState === 1) {
           input.ws.send(JSON.stringify({ type: 'pty.output', sessionId: input.sessionId, data: existing.buffer }));
         }

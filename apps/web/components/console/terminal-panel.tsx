@@ -94,17 +94,21 @@ export function TerminalPanel() {
       }
     });
 
-    // Handle resize
+    // Handle resize with debounce to prevent TUI redraw spam
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
-      if (activePtyRef.current) {
-        wsClient.send({
-          type: 'pty.resize',
-          sessionId: activePtyRef.current,
-          cols: term.cols,
-          rows: term.rows,
-        } as any);
-      }
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        fitAddon.fit();
+        if (activePtyRef.current) {
+          wsClient.send({
+            type: 'pty.resize',
+            sessionId: activePtyRef.current,
+            cols: term.cols,
+            rows: term.rows,
+          } as any);
+        }
+      }, 300);
     });
     resizeObserver.observe(termRef.current);
 
@@ -152,13 +156,11 @@ export function TerminalPanel() {
         ? session.metadata.worktreePath
         : room.repoPath;
 
-    // Clear terminal
+    // Don't clear — server will replay buffer if PTY exists, or show fresh output if new.
+    // Just add a visual separator.
     const term = termInstanceRef.current;
     if (term) {
-      term.clear();
-      term.writeln(`\x1b[36m── Starting ${session.agent === 'claude' ? 'Claude' : 'Codex'} (${session.name}) ──\x1b[0m`);
-      term.writeln(`\x1b[90mWorking directory: ${workingDirectory}\x1b[0m`);
-      term.writeln('');
+      term.writeln(`\r\n\x1b[36m── Switching to ${session.agent === 'claude' ? 'Claude' : 'Codex'} (${session.name}) ──\x1b[0m\r\n`);
     }
 
     // Start PTY via WebSocket
