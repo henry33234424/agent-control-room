@@ -70,8 +70,14 @@ export class ScreenExtractor {
       return '';
     }
 
+    // Only return the NEW content (what wasn't in the last extraction)
+    let delta = agentContent;
+    if (this.lastAgentContent && agentContent.startsWith(this.lastAgentContent)) {
+      delta = agentContent.slice(this.lastAgentContent.length).trim();
+    }
+
     this.lastAgentContent = agentContent;
-    return agentContent;
+    return delta;
   }
 
   dispose(): void {

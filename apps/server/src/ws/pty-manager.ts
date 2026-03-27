@@ -332,7 +332,12 @@ class PtyManager {
     text = text.trim();
     if (!text) return;
 
-    tracking.text = text; // Replace with latest screen content (not accumulate)
+    // Accumulate delta (extractDelta already returns only new content)
+    if (tracking.text) {
+      tracking.text += '\n' + text;
+    } else {
+      tracking.text = text;
+    }
     this.scheduleReplyFlush(session);
   }
 
