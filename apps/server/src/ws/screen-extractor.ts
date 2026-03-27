@@ -10,9 +10,9 @@ const { Terminal } = require_('@xterm/headless');
  * by diffing screen snapshots.
  */
 export class ScreenExtractor {
-  private term: Terminal;
-  private lastSnapshot: string[] = [];
+  private term: InstanceType<typeof Terminal>;
   private lastContentHash = '';
+  private lastAgentContent = '';
 
   constructor(cols = 120, rows = 40) {
     this.term = new Terminal({ cols, rows, allowProposedApi: true });
@@ -63,25 +63,69 @@ export class ScreenExtractor {
     }
     this.lastContentHash = currentContent;
 
-    // Find meaningful lines (not empty, not TUI decorations)
-    const meaningfulLines = currentLines
-      .map((l) => l.trimEnd())
-      .filter((l) => isMeaningfulLine(l));
+    // Strategy: extract Claude's agent response blocks.
+    // Claude TUI marks agent output with ⏺ at the start of the block.
+    // We find all content between ⏺ markers and the next prompt (❯) or separator (───).
+    const agentContent = extractAgentBlocks(currentLines);
 
-    // Diff against last snapshot
-    const previousSet = new Set(this.lastSnapshot);
-    const newLines = meaningfulLines.filter((l) => !previousSet.has(l));
+    if (agentContent === this.lastAgentContent) {
+      return '';
+    }
 
-    this.lastSnapshot = meaningfulLines;
+    const delta = agentContent;
+    this.lastAgentContent = agentContent;
 
-    if (newLines.length === 0) return '';
-
-    return newLines.join('\n');
+    return delta;
   }
 
   dispose(): void {
     this.term.dispose();
   }
+}
+
+/**
+ * Extract Claude agent response blocks from screen lines.
+ * Claude marks agent output with ⏺ at the beginning.
+ * Content continues until the next prompt (❯), separator (───), or TUI chrome.
+ */
+function extractAgentBlocks(lines: string[]): string {
+  const blocks: string[] = [];
+  let inBlock = false;
+  let currentBlock: string[] = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    const trimmed = line.trim();
+
+    // Start of agent block: line begins with ⏺
+    if (/^⏺/.test(trimmed)) {
+      // Save previous block if any
+      if (currentBlock.length > 0) {
+        blocks.push(currentBlock.join('\n'));
+      }
+      // Start new block with content after ⏺
+      const content = trimmed.replace(/^⏺\s*/, '').trim();
+      currentBlock = content ? [content] : [];
+      inBlock = true;
+      continue;
+    }
+
+    if (!inBlock) continue;
+
+    // End of block: prompt line, separator, or TUI chrome
+    if (/^❯/.test(trimmed)) { inBlock = false; continue; }
+    if (/^[─━═]{3,}/.test(trimmed)) { inBlock = false; continue; }
+    if (!isMeaningfulLine(line)) continue;
+
+    currentBlock.push(trimmed);
+  }
+
+  // Don't forget the last block
+  if (currentBlock.length > 0) {
+    blocks.push(currentBlock.join('\n'));
+  }
+
+  return blocks.join('\n\n');
 }
 
 /**
@@ -91,15 +135,26 @@ function isMeaningfulLine(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed) return false;
 
-  // Filter TUI decorations
-  if (/^[─━═╭╮╰╯│┃┌┐└┘├┤┬┴┼\s]+$/.test(trimmed)) return false;
-  if (/^[✻✽✶✳◐◑◒◓◴◵◶◷⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\s]+$/.test(trimmed)) return false;
+  // --- TUI decorations ---
+  // Box-drawing / separator lines
+  if (/^[─━═╭╮╰╯│┃┌┐└┘├┤┬┴┼╱╲╳▐▛▜▟▙▘▝▗▖▚▞\s]+$/.test(trimmed)) return false;
+  // Spinners
+  if (/^[✻✽✶✳✢◐◑◒◓◴◵◶◷⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⏺\s]+$/.test(trimmed)) return false;
+  // Prompt line (with or without text after)
   if (/^❯\s*$/.test(trimmed)) return false;
+  // Prompt line with user input echo (e.g. "❯ 嗨" or "❯ hello")
+  if (/^❯\s+.+/.test(trimmed)) return false;
+
+  // --- Claude Code UI chrome ---
   if (/Claude Code/i.test(trimmed) && /v\d+\.\d+/i.test(trimmed)) return false;
   if (/Photosynthesizing|Working…|Working\.\.\./i.test(trimmed)) return false;
   if (/esc\s+to\s+interrupt/i.test(trimmed)) return false;
-  if (/^\?\s+for\s+shortcuts/i.test(trimmed)) return false;
+  if (/\?\s+for\s+shortcuts/i.test(trimmed)) return false;
+  if (/for\s+shortcuts/i.test(trimmed)) return false;
   if (/medium\s+·\s+\/effort/i.test(trimmed)) return false;
+  if (/low\s+·\s+\/effort/i.test(trimmed)) return false;
+  if (/high\s+·\s+\/effort/i.test(trimmed)) return false;
+  if (/max\s+·\s+\/effort/i.test(trimmed)) return false;
   if (/Welcome\s+back/i.test(trimmed)) return false;
   if (/Tips\s+for\s+getting\s+started/i.test(trimmed)) return false;
   if (/Recent\s+activity/i.test(trimmed)) return false;
@@ -108,11 +163,23 @@ function isMeaningfulLine(line: string): boolean {
   if (/remote-control.*is\s+active/i.test(trimmed)) return false;
   if (/upgrade.*Claude\s+mobile\s+app/i.test(trimmed)) return false;
   if (/Opus.*context.*Claude\s+Max/i.test(trimmed)) return false;
+  if (/Sonnet.*context/i.test(trimmed)) return false;
+  if (/Haiku.*context/i.test(trimmed)) return false;
   if (/Organization/i.test(trimmed) && /@.*\.com/i.test(trimmed)) return false;
   if (/^~\/.*Projects\//i.test(trimmed)) return false;
+  if (/claude\.ai\/code\/session/i.test(trimmed)) return false;
+  if (/Code\s+in\s+CLI\s+or\s+at/i.test(trimmed)) return false;
+  if (/Please\s+upgrade.*mobile\s+app/i.test(trimmed)) return false;
+
+  // Tool use chrome (Read N file, ctrl+o to expand, etc.)
+  if (/^Read\s+\d+\s+file/i.test(trimmed)) return false;
+  if (/ctrl\+o\s+to\s+expand/i.test(trimmed)) return false;
 
   // Single-char or very short spinner residues
   if (/^[a-z]{1,3}…?$/.test(trimmed)) return false;
+
+  // Lines that are just a single symbol/emoji with nothing else
+  if (/^[⏺⏹⏸▶⏵⏯⏮⏭]\s*$/.test(trimmed)) return false;
 
   return true;
 }
