@@ -13,6 +13,7 @@ interface TermInstance {
   fitAddon: any;
   container: HTMLDivElement;
   sessionId: string;
+  isNew: boolean;
 }
 
 export function TerminalPanel() {
@@ -76,7 +77,7 @@ export function TerminalPanel() {
       wsClient.send({ type: 'pty.input', sessionId, data } as any);
     });
 
-    const inst: TermInstance = { term, fitAddon, container, sessionId };
+    const inst: TermInstance = { term, fitAddon, container, sessionId, isNew: true };
     termsRef.current.set(sessionId, inst);
 
     return inst;
@@ -100,9 +101,12 @@ export function TerminalPanel() {
     inst.container.style.display = 'block';
     inst.fitAddon.fit();
 
-    // Start PTY if not already running
-    if (activeSessionRef.current !== selectedSessionId) {
-      activeSessionRef.current = selectedSessionId;
+    // Only send pty.start for NEW terminal instances (first time seeing this session).
+    // Switching back to an existing terminal just shows it — no pty.start, no buffer replay.
+    activeSessionRef.current = selectedSessionId;
+
+    if (inst.isNew) {
+      inst.isNew = false;
 
       const workingDirectory =
         typeof session.metadata?.worktreePath === 'string'
