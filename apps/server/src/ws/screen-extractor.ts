@@ -93,7 +93,7 @@ export class ScreenExtractor {
 const BLOCK_START = /^[⏺·]\s/;
 const BLOCK_END = /^[❯>]\s|^[─━═]{3,}|^gpt-|^>_\s/;
 
-function extractAgentBlocks(lines: string[]): string {
+export function extractAgentBlocks(lines: string[]): string {
   const blocks: string[] = [];
   let inBlock = false;
   let currentBlock: string[] = [];
@@ -104,11 +104,10 @@ function extractAgentBlocks(lines: string[]): string {
 
     // Start of agent block
     if (BLOCK_START.test(trimmed)) {
-      if (currentBlock.length > 0) {
-        blocks.push(currentBlock.join('\n'));
-      }
+      pushBlock(blocks, currentBlock);
       const content = trimmed.replace(/^[⏺·]\s*/, '').trim();
-      currentBlock = content ? [content] : [];
+      const firstLine = isTransientStatusLine(content) ? '' : content;
+      currentBlock = firstLine ? [firstLine] : [];
       inBlock = true;
       continue;
     }
@@ -121,18 +120,50 @@ function extractAgentBlocks(lines: string[]): string {
 
     // Sub-block markers (indented · in Codex)
     if (/^\s+·\s/.test(line)) {
-      currentBlock.push(trimmed.replace(/^·\s*/, '- '));
+      pushLine(currentBlock, trimmed.replace(/^·\s*/, '- '));
       continue;
     }
 
-    currentBlock.push(trimmed);
+    pushLine(currentBlock, trimmed);
   }
 
-  if (currentBlock.length > 0) {
-    blocks.push(currentBlock.join('\n'));
-  }
+  pushBlock(blocks, currentBlock);
 
   return blocks.join('\n\n');
+}
+
+function pushBlock(blocks: string[], currentBlock: string[]): void {
+  const normalized = normalizeBlock(currentBlock);
+  if (!normalized) return;
+  if (blocks[blocks.length - 1] === normalized) return;
+  blocks.push(normalized);
+}
+
+function pushLine(lines: string[], line: string): void {
+  const normalized = line.trim();
+  if (!normalized) return;
+  if (lines[lines.length - 1] === normalized) return;
+  lines.push(normalized);
+}
+
+function normalizeBlock(lines: string[]): string {
+  const normalized = lines
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (normalized.length === 0) return '';
+  return normalized.join('\n');
+}
+
+function isTransientStatusLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  if (/^(?:Working|Thinking|Zigzagging|Slithering|Photosynthesizing)(?:\.\.\.|…)?$/i.test(trimmed)) {
+    return true;
+  }
+  if (/^[A-Z][a-z]+(?:ing|izing|ering)(?:\.\.\.|…)?$/.test(trimmed)) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -155,6 +186,7 @@ function isMeaningfulLine(line: string): boolean {
   // --- Claude Code UI chrome ---
   if (/Claude Code/i.test(trimmed) && /v\d+\.\d+/i.test(trimmed)) return false;
   if (/Photosynthesizing|Working…|Working\.\.\./i.test(trimmed)) return false;
+  if (isTransientStatusLine(trimmed)) return false;
   if (/esc\s+to\s+interrupt/i.test(trimmed)) return false;
   if (/\?\s+for\s+shortcuts/i.test(trimmed)) return false;
   if (/for\s+shortcuts/i.test(trimmed)) return false;
