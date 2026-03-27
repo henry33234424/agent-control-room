@@ -25,10 +25,16 @@ interface TermInstance {
 }
 
 interface TerminalSnapshot {
-  cols: number;
-  rows: number;
+  cols?: number;
+  rows?: number;
   lines: string[];
   capturedAt: number;
+}
+
+function toPositiveInteger(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : undefined;
 }
 
 export function TerminalPanel() {
@@ -56,10 +62,27 @@ export function TerminalPanel() {
     try {
       const raw = window.localStorage.getItem(key);
       if (!raw) return null;
-      const parsed = JSON.parse(raw) as TerminalSnapshot;
-      if (!Array.isArray(parsed.lines)) return null;
-      return parsed;
+
+      const parsed = JSON.parse(raw) as Partial<TerminalSnapshot> | null;
+      if (!parsed || !Array.isArray(parsed.lines)) {
+        window.localStorage.removeItem(key);
+        return null;
+      }
+
+      const lines = parsed.lines.map((line) => (typeof line === 'string' ? line : ''));
+      if (lines.length === 0) {
+        window.localStorage.removeItem(key);
+        return null;
+      }
+
+      return {
+        cols: toPositiveInteger(parsed.cols),
+        rows: toPositiveInteger(parsed.rows),
+        lines,
+        capturedAt: typeof parsed.capturedAt === 'number' ? parsed.capturedAt : Date.now(),
+      };
     } catch {
+      window.localStorage.removeItem(key);
       return null;
     }
   }, [getSnapshotKey]);
@@ -116,8 +139,8 @@ export function TerminalPanel() {
       cursorBlink: true,
       fontSize: 13,
       fontFamily: "'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace",
-      ...(snapshot?.cols ? { cols: snapshot.cols } : {}),
-      ...(snapshot?.rows ? { rows: snapshot.rows } : {}),
+      ...(snapshot?.cols !== undefined ? { cols: snapshot.cols } : {}),
+      ...(snapshot?.rows !== undefined ? { rows: snapshot.rows } : {}),
       theme: {
         background: '#0a0e14',
         foreground: '#e6e6e6',
