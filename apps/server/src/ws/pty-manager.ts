@@ -317,14 +317,15 @@ class PtyManager {
       return;
     }
 
-    const normalizedText = tracking.text.trim();
+    const draftText = composeTranscriptDraft(tracking.text, tracking.pendingLine);
+    const normalizedText = draftText.trim();
     if (!normalizedText || normalizedText === tracking.lastFlushedText) {
       return;
     }
 
     tracking.flushing = true;
     try {
-      const content = renderTranscriptMessage(tracking.text);
+      const content = renderTranscriptMessage(draftText);
       if (!tracking.messageId && tracking.replyToReady) {
         await tracking.replyToReady;
       }
@@ -531,6 +532,10 @@ export function extractTranscriptDelta(
 function flushPendingTranscriptLine(pendingLine: string): string {
   const line = filterTranscriptLine(pendingLine);
   return line === null ? '' : joinTranscriptLines([line]);
+}
+
+export function composeTranscriptDraft(text: string, pendingLine: string): string {
+  return text + flushPendingTranscriptLine(pendingLine);
 }
 
 function joinTranscriptLines(lines: string[]): string {

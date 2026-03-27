@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { consumeTerminalInput, extractTranscriptDelta, sanitizeTerminalText } from '../src/ws/pty-manager.js';
+import {
+  composeTranscriptDraft,
+  consumeTerminalInput,
+  extractTranscriptDelta,
+  sanitizeTerminalText,
+} from '../src/ws/pty-manager.js';
 
 describe('consumeTerminalInput', () => {
   it('collects plain text until enter and submits one line', () => {
@@ -71,5 +76,11 @@ describe('extractTranscriptDelta', () => {
       text: '',
       pendingLine: 'partial',
     });
+  });
+
+  it('can preview the current pending line before a trailing newline arrives', () => {
+    expect(composeTranscriptDraft('', '嗨！有什么我可以帮你的吗？')).toBe(
+      '嗨！有什么我可以帮你的吗？\n',
+    );
   });
 });
