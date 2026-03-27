@@ -1,37 +1,29 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { wsClient } from '@/lib/ws-client';
 import { useRoomStore } from '@/stores/room-store';
 import { useUIStore } from '@/stores/ui-store';
 
-// Dynamic import xterm to avoid SSR issues
 let Terminal: any = null;
 let FitAddon: any = null;
+
+interface TermInstance {
+  term: any;
+  fitAddon: any;
+  container: HTMLDivElement;
+  sessionId: string;
+}
 
 export function TerminalPanel() {
   const room = useRoomStore((s) => s.room);
   const sessions = useRoomStore((s) => s.sessions);
   const selectedSessionId = useUIStore((s) => s.selectedSessionId);
 
-  const termRef = useRef<HTMLDivElement>(null);
-  const termInstanceRef = useRef<any>(null);
-  const fitAddonRef = useRef<any>(null);
-  const [activePtySessionId, _setActivePtySessionId] = useState<string | null>(null);
-  const activePtyRef = useRef<string | null>(null);
-  const setActivePtySessionId = (id: string | null) => {
-    activePtyRef.current = id;
-    _setActivePtySessionId(id);
-  };
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const termsRef = useRef<Map<string, TermInstance>>(new Map());
+  const activeSessionRef = useRef<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const selectedSession = useMemo(
-    () => sessions.find((session) => session.id === selectedSessionId) ?? null,
-    [sessions, selectedSessionId],
-  );
-  const activeSession = useMemo(
-    () => sessions.find((session) => session.id === activePtySessionId) ?? null,
-    [sessions, activePtySessionId],
-  );
 
   // Load xterm dynamically
   useEffect(() => {
@@ -45,27 +37,31 @@ export function TerminalPanel() {
     });
   }, []);
 
-  // Initialize terminal
-  useEffect(() => {
-    if (!loaded || !termRef.current || termInstanceRef.current) return;
+  // Create or get a Terminal instance for a session
+  const getOrCreateTerm = useCallback((sessionId: string): TermInstance | null => {
+    if (!loaded || !wrapperRef.current) return null;
 
+    const existing = termsRef.current.get(sessionId);
+    if (existing) return existing;
+
+    // Create container div
+    const container = document.createElement('div');
+    container.style.position = 'absolute';
+    container.style.inset = '0';
+    container.style.display = 'none'; // hidden by default
+    container.style.padding = '4px';
+    wrapperRef.current.appendChild(container);
+
+    // Create terminal
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, monospace",
+      fontFamily: "'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace",
       theme: {
         background: '#0a0e14',
         foreground: '#e6e6e6',
         cursor: '#f8f8f0',
         selectionBackground: '#3b4261',
-        black: '#1a1b26',
-        red: '#f7768e',
-        green: '#9ece6a',
-        yellow: '#e0af68',
-        blue: '#7aa2f7',
-        magenta: '#bb9af7',
-        cyan: '#7dcfff',
-        white: '#c0caf5',
       },
       scrollback: 10000,
       convertEol: true,
@@ -73,112 +69,126 @@ export function TerminalPanel() {
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-    term.open(termRef.current);
-    fitAddon.fit();
+    term.open(container);
 
-    termInstanceRef.current = term;
-    fitAddonRef.current = fitAddon;
-
-    term.writeln('\x1b[36m╔══════════════════════════════════════╗\x1b[0m');
-    term.writeln('\x1b[36m║       Control Room Terminal          ║\x1b[0m');
-    term.writeln('\x1b[36m╚══════════════════════════════════════╝\x1b[0m');
-    term.writeln('');
-    term.writeln('Use the left sidebar to select a project and start a');
-    term.writeln('Claude or Codex session.');
-    term.writeln('');
-
-    // Forward user input to PTY via WebSocket (use ref to always get latest value)
+    // Forward input to PTY
     term.onData((data: string) => {
-      if (activePtyRef.current) {
-        wsClient.send({ type: 'pty.input', sessionId: activePtyRef.current, data } as any);
-      }
+      wsClient.send({ type: 'pty.input', sessionId, data } as any);
     });
 
-    // Handle resize with debounce to prevent TUI redraw spam
-    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
-    const resizeObserver = new ResizeObserver(() => {
-      if (resizeTimer) clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
-        fitAddon.fit();
-        if (activePtyRef.current) {
-          wsClient.send({
-            type: 'pty.resize',
-            sessionId: activePtyRef.current,
-            cols: term.cols,
-            rows: term.rows,
-          } as any);
-        }
-      }, 300);
-    });
-    resizeObserver.observe(termRef.current);
+    const inst: TermInstance = { term, fitAddon, container, sessionId };
+    termsRef.current.set(sessionId, inst);
 
-    return () => {
-      resizeObserver.disconnect();
-      term.dispose();
-      termInstanceRef.current = null;
-    };
+    return inst;
   }, [loaded]);
 
-  // Listen for PTY output from WebSocket
+  // Switch visible terminal when selected session changes
+  useEffect(() => {
+    if (!loaded || !selectedSessionId) return;
+
+    const session = sessions.find((s) => s.id === selectedSessionId);
+    if (!session || !room) return;
+
+    // Hide all terminals
+    for (const inst of termsRef.current.values()) {
+      inst.container.style.display = 'none';
+    }
+
+    // Show selected terminal
+    const inst = getOrCreateTerm(selectedSessionId);
+    if (!inst) return;
+    inst.container.style.display = 'block';
+    inst.fitAddon.fit();
+
+    // Start PTY if not already running
+    if (activeSessionRef.current !== selectedSessionId) {
+      activeSessionRef.current = selectedSessionId;
+
+      const workingDirectory =
+        typeof session.metadata?.worktreePath === 'string'
+          ? session.metadata.worktreePath
+          : room.repoPath;
+
+      wsClient.send({
+        type: 'pty.start',
+        sessionId: selectedSessionId,
+        roomId: room.id,
+        agent: session.agent,
+        cwd: workingDirectory,
+        cols: inst.term.cols,
+        rows: inst.term.rows,
+      } as any);
+    }
+  }, [loaded, selectedSessionId, sessions, room, getOrCreateTerm]);
+
+  // Listen for PTY output — route to correct terminal
   useEffect(() => {
     if (!loaded) return;
 
     const unsub = wsClient.onEvent((event: any) => {
-      if (event.type === 'pty.output' && termInstanceRef.current) {
-        if (event.sessionId === activePtyRef.current) {
-          termInstanceRef.current.write(event.data);
+      if (event.type === 'pty.output') {
+        const inst = termsRef.current.get(event.sessionId);
+        if (inst) {
+          inst.term.write(event.data);
         }
       }
-      if (event.type === 'pty.exit' && event.sessionId === activePtyRef.current) {
-        if (event.error) {
-          termInstanceRef.current?.writeln(`\r\n\x1b[31m[${event.error}]\x1b[0m`);
+      if (event.type === 'pty.exit') {
+        const inst = termsRef.current.get(event.sessionId);
+        if (inst) {
+          inst.term.writeln('\r\n\x1b[33m[Process exited]\x1b[0m');
         }
-        termInstanceRef.current?.writeln('\r\n\x1b[33m[Process exited]\x1b[0m');
-        setActivePtySessionId(null);
       }
     });
 
     return unsub;
   }, [loaded]);
 
-  // When session selection changes, start PTY for that session
+  // Resize observer — debounced, resizes the active terminal
   useEffect(() => {
-    if (!room || !selectedSessionId || !loaded) return;
+    if (!loaded || !wrapperRef.current) return;
 
-    const session = sessions.find((s) => s.id === selectedSessionId);
-    if (!session) return;
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    const observer = new ResizeObserver(() => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const activeId = activeSessionRef.current;
+        if (!activeId) return;
+        const inst = termsRef.current.get(activeId);
+        if (!inst) return;
+        inst.fitAddon.fit();
+        wsClient.send({
+          type: 'pty.resize',
+          sessionId: activeId,
+          cols: inst.term.cols,
+          rows: inst.term.rows,
+        } as any);
+      }, 300);
+    });
+    observer.observe(wrapperRef.current);
 
-    // Don't restart if already active
-    if (activePtySessionId === selectedSessionId) return;
+    return () => {
+      observer.disconnect();
+      if (resizeTimer) clearTimeout(resizeTimer);
+    };
+  }, [loaded]);
 
-    const workingDirectory =
-      typeof session.metadata?.worktreePath === 'string'
-        ? session.metadata.worktreePath
-        : room.repoPath;
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      for (const inst of termsRef.current.values()) {
+        inst.term.dispose();
+        inst.container.remove();
+      }
+      termsRef.current.clear();
+    };
+  }, []);
 
-    // Don't clear — server will replay buffer if PTY exists, or show fresh output if new.
-    // Just add a visual separator.
-    const term = termInstanceRef.current;
-    if (term) {
-      term.writeln(`\r\n\x1b[36m── Switching to ${session.agent === 'claude' ? 'Claude' : 'Codex'} (${session.name}) ──\x1b[0m\r\n`);
-    }
-
-    // Start PTY via WebSocket
-    wsClient.send({
-      type: 'pty.start',
-      sessionId: selectedSessionId,
-      roomId: room.id,
-      agent: session.agent,
-      cols: term?.cols ?? 120,
-      rows: term?.rows ?? 40,
-    } as any);
-
-    setActivePtySessionId(selectedSessionId);
-  }, [room, selectedSessionId, sessions, loaded]);
+  const selectedSession = sessions.find((s) => s.id === selectedSessionId);
+  const activeSession = sessions.find((s) => s.id === activeSessionRef.current);
 
   return (
     <div className="relative h-full bg-[#0a0e14]">
-      <div ref={termRef} className="absolute inset-0 p-1" />
+      <div ref={wrapperRef} className="absolute inset-0" />
 
       {!room && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -193,20 +203,21 @@ export function TerminalPanel() {
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="rounded-xl border border-gray-800 bg-gray-950/90 px-4 py-3 text-center shadow-2xl">
             <div className="text-sm font-medium text-gray-200">{room.name}</div>
-            <div className="mt-1 text-xs text-gray-500">Create or select a Claude/Codex session from the left.</div>
+            <div className="mt-1 text-xs text-gray-500">Create or select a session from the left.</div>
           </div>
         </div>
       )}
 
-      {activePtySessionId && activeSession && (
-        <div className="absolute right-3 top-3 flex items-center gap-2 rounded-full border border-gray-800 bg-gray-950/90 px-3 py-1.5 shadow-lg">
+      {activeSessionRef.current && activeSession && (
+        <div className="absolute right-3 top-3 z-10 flex items-center gap-2 rounded-full border border-gray-800 bg-gray-950/90 px-3 py-1.5 shadow-lg">
           <span className="text-[10px] uppercase tracking-wide text-gray-500">{activeSession.agent}</span>
           <span className="max-w-52 truncate text-xs text-gray-300">{activeSession.name}</span>
           <button
             onClick={() => {
-              wsClient.send({ type: 'pty.kill', sessionId: activePtySessionId } as any);
-              setActivePtySessionId(null);
-              termInstanceRef.current?.writeln('\r\n\x1b[31m[Killed]\x1b[0m');
+              wsClient.send({ type: 'pty.kill', sessionId: activeSessionRef.current } as any);
+              const inst = termsRef.current.get(activeSessionRef.current!);
+              if (inst) inst.term.writeln('\r\n\x1b[31m[Killed]\x1b[0m');
+              activeSessionRef.current = null;
             }}
             className="text-xs text-red-400 hover:text-red-300 transition-colors"
           >
