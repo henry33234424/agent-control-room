@@ -1,9 +1,10 @@
 import { createRequire } from 'node:module';
 import type { WebSocket } from '@fastify/websocket';
-import type { AgentKind } from '@control-room/shared-types';
+import type { AgentKind, WsPtyRestore } from '@control-room/shared-types';
 import type { IPty } from 'node-pty';
 import { sessionService } from '../services/session-service.js';
 import { SessionWatcher } from './session-watcher.js';
+import { HeadlessTerminalState } from './headless-terminal-state.js';
 const require_ = createRequire(import.meta.url);
 const pty: { spawn: typeof import('node-pty').spawn } = require_('node-pty');
 
@@ -14,7 +15,11 @@ interface PtySession {
   sessionId: string;
   roomId: string;
   buffer: string;
+  screen: HeadlessTerminalState;
   detachTimer: NodeJS.Timeout | null;
+  restoreSequence: number;
+  restoreBacklog: string;
+  restoring: boolean;
   watcher: SessionWatcher;
 }
 
@@ -36,7 +41,6 @@ class PtyManager {
     args: string[];
     cwd: string;
     vendorSessionId?: string;
-    skipReplay?: boolean;
     ws?: WebSocket | null;
     cols?: number;
     rows?: number;
@@ -54,18 +58,7 @@ class PtyManager {
       }
       if (input.ws) {
         existing.ws = input.ws;
-        // Replay buffer first, then let frontend's debounced ResizeObserver handle resize later.
-        // Don't resize here — it causes TUI to redraw and clear the replayed content.
-        if (!input.skipReplay && existing.buffer && input.ws.readyState === 1) {
-          input.ws.send(JSON.stringify({ type: 'pty.output', sessionId: input.sessionId, data: existing.buffer }));
-        }
-        if (input.ws.readyState === 1) {
-          input.ws.send(JSON.stringify({
-            type: 'pty.started',
-            sessionId: input.sessionId,
-            restored: true,
-          }));
-        }
+        void this.restoreSocket(existing, input.ws);
       }
       return;
     }
@@ -88,7 +81,11 @@ class PtyManager {
       sessionId: input.sessionId,
       roomId: input.roomId,
       buffer: '',
+      screen: new HeadlessTerminalState(cols, rows),
       detachTimer: null,
+      restoreSequence: 0,
+      restoreBacklog: '',
+      restoring: false,
       watcher: new SessionWatcher({
         roomId: input.roomId,
         sessionId: input.sessionId,
@@ -114,8 +111,13 @@ class PtyManager {
     // PTY output → WebSocket (for terminal display)
     ptyProcess.onData((data: string) => {
       session.buffer = this.appendBuffer(session.buffer, data);
+      void session.screen.write(data);
       if (session.ws?.readyState === 1) {
-        session.ws.send(JSON.stringify({ type: 'pty.output', sessionId: input.sessionId, data }));
+        if (session.restoring) {
+          session.restoreBacklog = this.appendBuffer(session.restoreBacklog, data);
+        } else {
+          session.ws.send(JSON.stringify({ type: 'pty.output', sessionId: input.sessionId, data }));
+        }
       }
     });
 
@@ -130,16 +132,13 @@ class PtyManager {
       if (session.detachTimer) {
         clearTimeout(session.detachTimer);
       }
+      session.screen.dispose();
       session.watcher.stop();
       this.sessions.delete(input.sessionId);
     });
   }
 
-  /**
-   * Attach a WebSocket to an existing PTY session without replaying the buffer.
-   * Used when switching back to a session whose Terminal already has the content.
-   */
-  attach(sessionId: string, ws: WebSocket): boolean {
+  async attach(sessionId: string, ws: WebSocket): Promise<boolean> {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
 
@@ -152,6 +151,7 @@ class PtyManager {
     this.detachBySocket(ws);
 
     session.ws = ws;
+    await this.restoreSocket(session, ws);
     return true;
   }
 
@@ -205,6 +205,7 @@ class PtyManager {
   resize(sessionId: string, cols: number, rows: number): void {
     const session = this.sessions.get(sessionId);
     if (session) {
+      void session.screen.resize(cols, rows);
       session.ptyProcess.resize(cols, rows);
     }
   }
@@ -212,6 +213,7 @@ class PtyManager {
   resizeForSocket(ws: WebSocket, sessionId: string, cols: number, rows: number): void {
     const session = this.sessions.get(sessionId);
     if (session && session.ws === ws) {
+      void session.screen.resize(cols, rows);
       session.ptyProcess.resize(cols, rows);
     }
   }
@@ -277,6 +279,53 @@ class PtyManager {
       return next;
     }
     return next.slice(next.length - this.maxBufferChars);
+  }
+
+  private async restoreSocket(session: PtySession, ws: WebSocket): Promise<void> {
+    const restoreSequence = session.restoreSequence + 1;
+    session.restoreSequence = restoreSequence;
+    session.restoring = true;
+    session.restoreBacklog = '';
+
+    const snapshot = await session.screen.snapshot();
+    if (session.ws !== ws || restoreSequence !== session.restoreSequence) {
+      return;
+    }
+
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify(this.toRestoreEvent(session.sessionId, snapshot)));
+      ws.send(JSON.stringify({
+        type: 'pty.started',
+        sessionId: session.sessionId,
+        restored: true,
+      }));
+      if (session.restoreBacklog) {
+        ws.send(JSON.stringify({
+          type: 'pty.output',
+          sessionId: session.sessionId,
+          data: session.restoreBacklog,
+        }));
+      }
+    }
+
+    if (restoreSequence === session.restoreSequence) {
+      session.restoring = false;
+      session.restoreBacklog = '';
+    }
+  }
+
+  private toRestoreEvent(
+    sessionId: string,
+    snapshot: Awaited<ReturnType<HeadlessTerminalState['snapshot']>>,
+  ): WsPtyRestore {
+    return {
+      type: 'pty.restore',
+      sessionId,
+      screen: snapshot.screen,
+      cols: snapshot.cols,
+      rows: snapshot.rows,
+      viewportY: snapshot.viewportY,
+    };
   }
 
   private scheduleDetachCleanup(session: PtySession): void {

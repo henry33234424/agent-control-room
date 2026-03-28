@@ -21,7 +21,7 @@ export async function registerWebSocket(app: FastifyInstance) {
 
         // Handle PTY messages (not part of ClientWsEvent type)
         if (msg.type === 'pty.start') {
-          const { sessionId, roomId, agent, cols, rows, skipReplay } = msg;
+          const { sessionId, roomId, agent, cols, rows } = msg;
 
           try {
             const ctx = await sessionService.resolveInteractiveContext(sessionId);
@@ -59,7 +59,6 @@ export async function registerWebSocket(app: FastifyInstance) {
               args,
               cwd: ctx.cwd,
               vendorSessionId: ctx.vendorSessionId,
-              skipReplay: skipReplay === true,
               ws,
               cols,
               rows,
@@ -85,7 +84,7 @@ export async function registerWebSocket(app: FastifyInstance) {
               return;
             }
 
-            if (!ptyManager.attach(msg.sessionId, ws)) {
+            if (!await ptyManager.attach(msg.sessionId, ws)) {
               ws.send(JSON.stringify({
                 type: 'pty.exit',
                 sessionId: msg.sessionId,

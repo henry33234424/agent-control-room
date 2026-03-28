@@ -4,7 +4,7 @@ import type { Approval } from './approval.js';
 import type { AgentSession, RoomSnapshot } from './room.js';
 import type { PinnedBriefItem } from './pinned-brief.js';
 import type { HandoffBundle } from './handoff.js';
-import type { RunStatus, SessionStatus } from './agent.js';
+import type { AgentKind, RunStatus, SessionStatus } from './agent.js';
 
 // ── Client → Server ──
 
@@ -29,11 +29,48 @@ export interface WsApprovalDecide {
   decision: 'approved' | 'denied';
 }
 
+export interface WsPtyStart {
+  type: 'pty.start';
+  sessionId: string;
+  roomId: string;
+  agent: AgentKind;
+  cols?: number;
+  rows?: number;
+}
+
+export interface WsPtyAttach {
+  type: 'pty.attach';
+  sessionId: string;
+}
+
+export interface WsPtyInput {
+  type: 'pty.input';
+  sessionId: string;
+  data: string;
+}
+
+export interface WsPtyResize {
+  type: 'pty.resize';
+  sessionId: string;
+  cols: number;
+  rows: number;
+}
+
+export interface WsPtyKill {
+  type: 'pty.kill';
+  sessionId: string;
+}
+
 export type ClientWsEvent =
   | WsSubscribe
   | WsUnsubscribe
   | WsRunInterrupt
-  | WsApprovalDecide;
+  | WsApprovalDecide
+  | WsPtyStart
+  | WsPtyAttach
+  | WsPtyInput
+  | WsPtyResize
+  | WsPtyKill;
 
 // ── Server → Client ──
 
@@ -92,6 +129,34 @@ export interface WsHandoffCreated {
   data: HandoffBundle;
 }
 
+export interface WsPtyStarted {
+  type: 'pty.started';
+  sessionId: string;
+  restored: boolean;
+}
+
+export interface WsPtyRestore {
+  type: 'pty.restore';
+  sessionId: string;
+  screen: string;
+  cols: number;
+  rows: number;
+  viewportY: number;
+}
+
+export interface WsPtyOutput {
+  type: 'pty.output';
+  sessionId: string;
+  data: string;
+}
+
+export interface WsPtyExit {
+  type: 'pty.exit';
+  sessionId: string;
+  exitCode: number;
+  error?: string;
+}
+
 export type ServerWsEvent =
   | WsRoomSnapshot
   | WsMessageCreated
@@ -103,4 +168,8 @@ export type ServerWsEvent =
   | WsApprovalRequested
   | WsApprovalResolved
   | WsPinUpdated
-  | WsHandoffCreated;
+  | WsHandoffCreated
+  | WsPtyStarted
+  | WsPtyRestore
+  | WsPtyOutput
+  | WsPtyExit;

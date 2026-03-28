@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AgentSession, ServerWsEvent, WsPtyRestore } from '@control-room/shared-types';
 import { wsClient } from '@/lib/ws-client';
 import { useRoomStore } from '@/stores/room-store';
 import { useUIStore } from '@/stores/ui-store';
@@ -12,33 +13,31 @@ let FitAddon: any = null;
 const PANEL_RESIZE_START = 'control-room:panel-resize-start';
 const PANEL_RESIZE_END = 'control-room:panel-resize-end';
 
+type TerminalConnectionState = 'idle' | 'attaching' | 'running' | 'ended';
+
 interface TermInstance {
   term: any;
   fitAddon: any;
   container: HTMLDivElement;
   sessionId: string;
-  isNew: boolean;
   lastReportedCols?: number;
   lastReportedRows?: number;
-  snapshotTimer: ReturnType<typeof setTimeout> | null;
-  restoredFromSnapshot: boolean;
+  connectionState: TerminalConnectionState;
+  statusMessage: string | null;
+  autoStartAttempted: boolean;
 }
 
-interface TerminalSnapshot {
-  cols?: number;
-  rows?: number;
-  lines: string[];
-  capturedAt: number;
+function isPtyNotRunningError(error: unknown): boolean {
+  return typeof error === 'string' && error === 'PTY session is not running';
 }
 
-function toPositiveInteger(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
-  const normalized = Math.floor(value);
-  return normalized > 0 ? normalized : undefined;
-}
-
-function hasMeaningfulSnapshotContent(lines: string[]): boolean {
-  return lines.some((line) => line.trim().length > 0);
+function shouldAutoStartSession(session: AgentSession | undefined, inst: TermInstance): boolean {
+  return Boolean(
+    session
+      && session.status === 'idle'
+      && !session.vendorSessionId
+      && !inst.autoStartAttempted,
+  );
 }
 
 export function TerminalPanel() {
@@ -52,50 +51,13 @@ export function TerminalPanel() {
   const panelDraggingRef = useRef(false);
   const resizeRafRef = useRef<number | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [, setTerminalUiVersion] = useState(0);
   const [selectedText, setSelectedText] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
 
-  const getSnapshotKey = useCallback((sessionId: string) => {
-    if (!room?.id) return null;
-    return `control-room:terminal-snapshot:${room.id}:${sessionId}`;
-  }, [room?.id]);
-
-  const readSnapshot = useCallback((sessionId: string): TerminalSnapshot | null => {
-    const key = getSnapshotKey(sessionId);
-    if (!key || typeof window === 'undefined') return null;
-    try {
-      const raw = window.localStorage.getItem(key);
-      if (!raw) return null;
-
-      const parsed = JSON.parse(raw) as Partial<TerminalSnapshot> | null;
-      if (!parsed || !Array.isArray(parsed.lines)) {
-        window.localStorage.removeItem(key);
-        return null;
-      }
-
-      const lines = parsed.lines.map((line) => (typeof line === 'string' ? line : ''));
-      if (lines.length === 0 || !hasMeaningfulSnapshotContent(lines)) {
-        window.localStorage.removeItem(key);
-        return null;
-      }
-
-      return {
-        cols: toPositiveInteger(parsed.cols),
-        rows: toPositiveInteger(parsed.rows),
-        lines,
-        capturedAt: typeof parsed.capturedAt === 'number' ? parsed.capturedAt : Date.now(),
-      };
-    } catch {
-      window.localStorage.removeItem(key);
-      return null;
-    }
-  }, [getSnapshotKey]);
-
-  const clearSnapshot = useCallback((sessionId: string) => {
-    const key = getSnapshotKey(sessionId);
-    if (!key || typeof window === 'undefined') return;
-    window.localStorage.removeItem(key);
-  }, [getSnapshotKey]);
+  const refreshTerminalUi = useCallback(() => {
+    setTerminalUiVersion((version) => version + 1);
+  }, []);
 
   // Load xterm dynamically
   useEffect(() => {
@@ -109,42 +71,23 @@ export function TerminalPanel() {
     });
   }, []);
 
-  const restoreSnapshot = useCallback((inst: Pick<TermInstance, 'term'>, snapshot: TerminalSnapshot | null) => {
-    if (!snapshot || snapshot.lines.length === 0) return false;
-
-    inst.term.reset();
-
-    const content = snapshot.lines.join('\r\n');
-    if (content) {
-      inst.term.write(content);
-    }
-    return true;
-  }, []);
-
-  // Create or get a Terminal instance for a session
   const getOrCreateTerm = useCallback((sessionId: string): TermInstance | null => {
     if (!loaded || !wrapperRef.current) return null;
 
     const existing = termsRef.current.get(sessionId);
     if (existing) return existing;
 
-    // Create container div
     const container = document.createElement('div');
     container.style.position = 'absolute';
     container.style.inset = '0';
-    container.style.display = 'none'; // hidden by default
+    container.style.display = 'none';
     container.style.padding = '4px';
     wrapperRef.current.appendChild(container);
 
-    const snapshot = readSnapshot(sessionId);
-
-    // Create terminal
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
       fontFamily: "'JetBrains Mono', 'Fira Code', Menlo, Monaco, monospace",
-      ...(snapshot?.cols !== undefined ? { cols: snapshot.cols } : {}),
-      ...(snapshot?.rows !== undefined ? { rows: snapshot.rows } : {}),
       theme: {
         background: '#0a0e14',
         foreground: '#e6e6e6',
@@ -158,14 +101,11 @@ export function TerminalPanel() {
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(container);
-    const restoredFromSnapshot = restoreSnapshot({ term }, snapshot);
 
-    // Forward input to PTY
     term.onData((data: string) => {
-      wsClient.send({ type: 'pty.input', sessionId, data } as any);
+      wsClient.send({ type: 'pty.input', sessionId, data });
     });
 
-    // Detect text selection for capture toolbar
     term.onSelectionChange(() => {
       const sel = term.getSelection();
       setSelectedText(sel && sel.trim() ? sel.trim() : null);
@@ -176,51 +116,46 @@ export function TerminalPanel() {
       fitAddon,
       container,
       sessionId,
-      isNew: true,
-      snapshotTimer: null,
-      restoredFromSnapshot,
+      connectionState: 'idle',
+      statusMessage: null,
+      autoStartAttempted: false,
     };
     termsRef.current.set(sessionId, inst);
 
     return inst;
-  }, [loaded, readSnapshot, restoreSnapshot]);
+  }, [loaded]);
 
-  const persistSnapshot = useCallback((sessionId: string) => {
-    const inst = termsRef.current.get(sessionId);
-    const key = getSnapshotKey(sessionId);
-    if (!inst || !key || typeof window === 'undefined') return;
-
-    const buffer = inst.term.buffer.active;
-    const start = buffer.viewportY;
-    const lines: string[] = [];
-    for (let i = 0; i < inst.term.rows; i += 1) {
-      const line = buffer.getLine(start + i);
-      lines.push(line ? line.translateToString(true) : '');
-    }
-
-    const snapshot: TerminalSnapshot = {
-      cols: inst.term.cols,
-      rows: inst.term.rows,
-      lines,
-      capturedAt: Date.now(),
-    };
-
-    if (!hasMeaningfulSnapshotContent(lines)) {
-      return;
-    }
-
-    window.localStorage.setItem(key, JSON.stringify(snapshot));
-  }, [getSnapshotKey]);
-
-  const scheduleSnapshotPersist = useCallback((sessionId: string) => {
+  const setTermStatus = useCallback((
+    sessionId: string,
+    connectionState: TerminalConnectionState,
+    statusMessage: string | null,
+    options?: { autoStartAttempted?: boolean },
+  ) => {
     const inst = termsRef.current.get(sessionId);
     if (!inst) return;
-    if (inst.snapshotTimer) clearTimeout(inst.snapshotTimer);
-    inst.snapshotTimer = setTimeout(() => {
-      inst.snapshotTimer = null;
-      persistSnapshot(sessionId);
-    }, 120);
-  }, [persistSnapshot]);
+
+    let changed = false;
+
+    if (inst.connectionState !== connectionState) {
+      inst.connectionState = connectionState;
+      changed = true;
+    }
+    if (inst.statusMessage !== statusMessage) {
+      inst.statusMessage = statusMessage;
+      changed = true;
+    }
+    if (
+      options?.autoStartAttempted !== undefined
+      && inst.autoStartAttempted !== options.autoStartAttempted
+    ) {
+      inst.autoStartAttempted = options.autoStartAttempted;
+      changed = true;
+    }
+
+    if (changed) {
+      refreshTerminalUi();
+    }
+  }, [refreshTerminalUi]);
 
   const syncTerminalSize = useCallback((
     sessionId: string,
@@ -233,7 +168,9 @@ export function TerminalPanel() {
 
     const cols = inst.term.cols;
     const rows = inst.term.rows;
-    if (!options?.notifyPty || cols <= 0 || rows <= 0) {
+    const shouldNotifyPty = options?.notifyPty && inst.connectionState !== 'attaching';
+
+    if (!shouldNotifyPty || cols <= 0 || rows <= 0) {
       return;
     }
 
@@ -243,129 +180,151 @@ export function TerminalPanel() {
 
     inst.lastReportedCols = cols;
     inst.lastReportedRows = rows;
-    scheduleSnapshotPersist(sessionId);
 
     wsClient.send({
       type: 'pty.resize',
       sessionId,
       cols,
       rows,
-    } as any);
-  }, [scheduleSnapshotPersist]);
+    });
+  }, []);
+
+  const startTerminalSession = useCallback((sessionId: string, options?: { auto?: boolean }) => {
+    const inst = termsRef.current.get(sessionId);
+    const currentRoom = useRoomStore.getState().room;
+    const session = useRoomStore.getState().sessions.find((item) => item.id === sessionId);
+
+    if (!inst || !currentRoom || !session) return;
+
+    inst.term.reset();
+    syncTerminalSize(sessionId, { notifyPty: false, force: true });
+    inst.lastReportedCols = inst.term.cols;
+    inst.lastReportedRows = inst.term.rows;
+
+    setTermStatus(sessionId, 'attaching', null, {
+      autoStartAttempted: options?.auto === true,
+    });
+
+    wsClient.send({
+      type: 'pty.start',
+      sessionId,
+      roomId: currentRoom.id,
+      agent: session.agent,
+      cols: inst.term.cols,
+      rows: inst.term.rows,
+    });
+  }, [setTermStatus, syncTerminalSize]);
+
+  const attachTerminalSession = useCallback((sessionId: string) => {
+    setTermStatus(sessionId, 'attaching', null);
+    wsClient.send({ type: 'pty.attach', sessionId });
+  }, [setTermStatus]);
+
+  const restoreTerminal = useCallback((event: WsPtyRestore) => {
+    const inst = termsRef.current.get(event.sessionId);
+    if (!inst) return;
+
+    setTermStatus(event.sessionId, 'running', null, { autoStartAttempted: false });
+
+    inst.term.reset();
+    if (event.cols > 0 && event.rows > 0) {
+      inst.term.resize(event.cols, event.rows);
+      inst.lastReportedCols = event.cols;
+      inst.lastReportedRows = event.rows;
+    }
+
+    const finalizeRestore = () => {
+      if (event.viewportY > 0) {
+        inst.term.scrollToLine(event.viewportY);
+      } else {
+        inst.term.scrollToBottom();
+      }
+
+      if (event.sessionId === activeSessionRef.current) {
+        window.requestAnimationFrame(() => {
+          syncTerminalSize(event.sessionId, { notifyPty: true, force: true });
+        });
+      }
+    };
+
+    if (event.screen) {
+      inst.term.write(event.screen, finalizeRestore);
+    } else {
+      finalizeRestore();
+    }
+  }, [setTermStatus, syncTerminalSize]);
 
   // Switch visible terminal when selected session changes
   useEffect(() => {
     if (!loaded || !selectedSessionId) return;
 
-    const session = sessions.find((s) => s.id === selectedSessionId);
+    const session = sessions.find((item) => item.id === selectedSessionId);
     if (!session || !room) return;
 
-    // Hide all terminals
     for (const inst of termsRef.current.values()) {
       inst.container.style.display = 'none';
     }
 
-    // Show selected terminal
     const inst = getOrCreateTerm(selectedSessionId);
     if (!inst) return;
+
     inst.container.style.display = 'block';
-
-    // Only send pty.start for NEW terminal instances (first time seeing this session).
-    // Switching back to an existing terminal just shows it — no pty.start, no buffer replay.
     activeSessionRef.current = selectedSessionId;
-    syncTerminalSize(selectedSessionId, { notifyPty: false, force: true });
+    attachTerminalSession(selectedSessionId);
+  }, [attachTerminalSession, getOrCreateTerm, loaded, room, selectedSessionId, sessions]);
 
-    if (inst.isNew) {
-      inst.isNew = false;
-
-      const workingDirectory =
-        typeof session.metadata?.worktreePath === 'string'
-          ? session.metadata.worktreePath
-          : room.repoPath;
-
-      wsClient.send({
-        type: 'pty.start',
-        sessionId: selectedSessionId,
-        roomId: room.id,
-        agent: session.agent,
-        cwd: workingDirectory,
-        skipReplay: inst.restoredFromSnapshot,
-        cols: inst.term.cols,
-        rows: inst.term.rows,
-      } as any);
-      inst.lastReportedCols = inst.term.cols;
-      inst.lastReportedRows = inst.term.rows;
-    } else {
-      // Re-attach WS to existing PTY (without buffer replay) so input works
-      wsClient.send({ type: 'pty.attach', sessionId: selectedSessionId } as any);
-      syncTerminalSize(selectedSessionId, { notifyPty: true });
-    }
-  }, [loaded, selectedSessionId, sessions, room, getOrCreateTerm, syncTerminalSize]);
-
-  // Listen for PTY output — route to correct terminal
+  // Listen for PTY events
   useEffect(() => {
     if (!loaded) return;
 
-    const unsub = wsClient.onEvent((event: any) => {
-      if (event.type === 'pty.output') {
-        const inst = termsRef.current.get(event.sessionId);
-        if (inst) {
-          inst.term.write(event.data);
-          inst.restoredFromSnapshot = false;
-          scheduleSnapshotPersist(event.sessionId);
-        }
+    const unsub = wsClient.onEvent((event: ServerWsEvent) => {
+      if (event.type === 'pty.restore') {
+        restoreTerminal(event);
+        return;
       }
-      if (event.type === 'pty.started') {
+
+      if (event.type === 'pty.output') {
         const inst = termsRef.current.get(event.sessionId);
         if (!inst) return;
 
-        if (event.restored === false) {
-          clearSnapshot(event.sessionId);
-          if (inst.restoredFromSnapshot) {
-            inst.term.reset();
-            inst.fitAddon.fit();
-          }
-          inst.restoredFromSnapshot = false;
+        const wasNotRunning = inst.connectionState !== 'running';
+        inst.term.write(event.data);
+        inst.connectionState = 'running';
+        inst.statusMessage = null;
+        if (wasNotRunning) {
+          refreshTerminalUi();
         }
+        return;
       }
-      if (event.type === 'pty.exit') {
-        const inst = termsRef.current.get(event.sessionId);
-        if (inst) {
-          // Only show exit message if there was no error (normal exit)
-          // Error exits (e.g. attach to dead PTY) should auto-restart
-          if (event.error && event.sessionId === activeSessionRef.current) {
-            // PTY not running (e.g. server restarted). Auto-restart it.
-            inst.isNew = true;
-            inst.restoredFromSnapshot = false;
-            const session = useRoomStore.getState().sessions.find((s: any) => s.id === event.sessionId);
-            const currentRoom = useRoomStore.getState().room;
-            if (session && currentRoom) {
-              const cwd = typeof session.metadata?.worktreePath === 'string'
-                ? session.metadata.worktreePath
-                : currentRoom.repoPath;
-              inst.term.writeln('\x1b[90m[Reconnecting...]\x1b[0m');
-              wsClient.send({
-                type: 'pty.start',
-                sessionId: event.sessionId,
-                roomId: currentRoom.id,
-                agent: session.agent,
-                cwd,
-                cols: inst.term.cols,
-                rows: inst.term.rows,
-              } as any);
-              inst.isNew = false;
-            }
-          } else if (!event.error) {
-            inst.term.writeln('\r\n\x1b[33m[Process exited]\x1b[0m');
-            inst.isNew = true;
-          }
-          scheduleSnapshotPersist(event.sessionId);
+
+      if (event.type === 'pty.started') {
+        if (!event.restored) {
+          setTermStatus(event.sessionId, 'running', null, { autoStartAttempted: false });
         }
+        return;
       }
+
+      if (event.type !== 'pty.exit') {
+        return;
+      }
+
+      const inst = termsRef.current.get(event.sessionId);
+      if (!inst) return;
+
+      const session = useRoomStore.getState().sessions.find((item) => item.id === event.sessionId);
+      const isActive = event.sessionId === activeSessionRef.current;
+
+      if (isPtyNotRunningError(event.error) && isActive && shouldAutoStartSession(session, inst)) {
+        startTerminalSession(event.sessionId, { auto: true });
+        return;
+      }
+
+      const statusMessage = event.error ?? 'Process exited';
+      setTermStatus(event.sessionId, 'ended', statusMessage, { autoStartAttempted: false });
     });
 
     return unsub;
-  }, [loaded, clearSnapshot, scheduleSnapshotPersist]);
+  }, [loaded, refreshTerminalUi, restoreTerminal, setTermStatus, startTerminalSession]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -373,10 +332,9 @@ export function TerminalPanel() {
     return wsClient.onOpen(() => {
       const activeId = activeSessionRef.current;
       if (!activeId) return;
-      wsClient.send({ type: 'pty.attach', sessionId: activeId } as any);
-      syncTerminalSize(activeId, { notifyPty: true });
+      attachTerminalSession(activeId);
     });
-  }, [loaded, syncTerminalSize]);
+  }, [attachTerminalSession, loaded]);
 
   useEffect(() => {
     const handleResizeStart = () => {
@@ -431,10 +389,8 @@ export function TerminalPanel() {
 
     const handleVisibility = () => {
       if (document.visibilityState !== 'visible') return;
-      // Re-fit all visible terminals after tab switch
       const activeId = activeSessionRef.current;
       if (!activeId) return;
-      // Small delay to let the browser finish layout
       setTimeout(() => {
         syncTerminalSize(activeId, { notifyPty: true, force: true });
       }, 100);
@@ -445,47 +401,29 @@ export function TerminalPanel() {
   }, [loaded, syncTerminalSize]);
 
   // Cleanup on unmount
-  useEffect(() => {
-    const persistAllSnapshots = () => {
-      for (const inst of termsRef.current.values()) {
-        if (inst.snapshotTimer) {
-          clearTimeout(inst.snapshotTimer);
-          inst.snapshotTimer = null;
-        }
-        persistSnapshot(inst.sessionId);
-      }
-    };
-
-    window.addEventListener('pagehide', persistAllSnapshots);
-
-    return () => {
-      window.removeEventListener('pagehide', persistAllSnapshots);
-      if (resizeRafRef.current !== null) {
-        window.cancelAnimationFrame(resizeRafRef.current);
-        resizeRafRef.current = null;
-      }
-      for (const inst of termsRef.current.values()) {
-        if (inst.snapshotTimer) {
-          clearTimeout(inst.snapshotTimer);
-          inst.snapshotTimer = null;
-        }
-        persistSnapshot(inst.sessionId);
-        inst.term.dispose();
-        inst.container.remove();
-      }
-      termsRef.current.clear();
-    };
-  }, [persistSnapshot]);
+  useEffect(() => () => {
+    if (resizeRafRef.current !== null) {
+      window.cancelAnimationFrame(resizeRafRef.current);
+      resizeRafRef.current = null;
+    }
+    for (const inst of termsRef.current.values()) {
+      inst.term.dispose();
+      inst.container.remove();
+    }
+    termsRef.current.clear();
+  }, []);
 
   const selectedSession = sessions.find((s) => s.id === selectedSessionId);
   const activeSession = sessions.find((s) => s.id === activeSessionRef.current);
+  const activeTerm = activeSessionRef.current
+    ? termsRef.current.get(activeSessionRef.current) ?? null
+    : null;
 
   const handleCapture = async (target: 'context' | 'brief' | 'claude' | 'codex') => {
     if (!selectedText || !room || capturing) return;
     setCapturing(true);
     try {
       if (target === 'context') {
-        // Create excerpt via dedicated API (no agent dispatch)
         const activeAgent = activeSession?.agent;
         await api.excerpts.create(room.id, {
           content: selectedText,
@@ -495,14 +433,12 @@ export function TerminalPanel() {
       } else if (target === 'brief') {
         await api.pins.create(room.id, { section: 'decisions', content: selectedText });
       } else {
-        // Send to another agent
         await api.messages.send(room.id, {
           content: `@${target} ${selectedText}`,
           mentionTarget: target,
         });
       }
       setSelectedText(null);
-      // Clear selection in terminal
       const inst = termsRef.current.get(activeSessionRef.current ?? '');
       if (inst) inst.term.clearSelection();
     } catch (err) {
@@ -534,40 +470,69 @@ export function TerminalPanel() {
         </div>
       )}
 
-      {/* Capture toolbar — appears when text is selected */}
+      {activeSession && activeTerm?.connectionState === 'attaching' && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+          <div className="rounded-xl border border-gray-800 bg-gray-950/92 px-4 py-3 text-center shadow-2xl">
+            <div className="text-sm font-medium text-gray-200">Restoring terminal</div>
+            <div className="mt-1 text-xs text-gray-500">Attaching to the server PTY and rebuilding the screen.</div>
+          </div>
+        </div>
+      )}
+
+      {activeSession && activeTerm?.connectionState === 'ended' && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center">
+          <div className="rounded-xl border border-red-900/70 bg-gray-950/95 px-5 py-4 text-center shadow-2xl">
+            <div className="text-sm font-medium text-gray-100">Session ended</div>
+            <div className="mt-1 max-w-sm text-xs text-gray-400">
+              {activeTerm.statusMessage ?? 'The PTY is no longer running.'}
+            </div>
+            <button
+              onClick={() => startTerminalSession(activeSession.id)}
+              className="mt-3 rounded bg-red-700 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-600"
+            >
+              Restart
+            </button>
+          </div>
+        </div>
+      )}
+
       {selectedText && (
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 rounded-full border border-amber-700 bg-gray-950/95 px-4 py-2 shadow-2xl backdrop-blur">
-          <span className="text-xs text-amber-300 mr-1">Capture:</span>
+        <div className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full border border-amber-700 bg-gray-950/95 px-4 py-2 shadow-2xl backdrop-blur">
+          <span className="mr-1 text-xs text-amber-300">Capture:</span>
           <button
             onClick={() => handleCapture('context')}
             disabled={capturing}
-            className="px-2 py-1 text-xs bg-amber-700 text-white rounded hover:bg-amber-600 disabled:opacity-50 transition-colors"
+            className="rounded bg-amber-700 px-2 py-1 text-xs text-white transition-colors hover:bg-amber-600 disabled:opacity-50"
           >
             To Context
           </button>
           <button
             onClick={() => handleCapture('brief')}
             disabled={capturing}
-            className="px-2 py-1 text-xs bg-blue-700 text-white rounded hover:bg-blue-600 disabled:opacity-50 transition-colors"
+            className="rounded bg-blue-700 px-2 py-1 text-xs text-white transition-colors hover:bg-blue-600 disabled:opacity-50"
           >
             To Brief
           </button>
           <button
             onClick={() => handleCapture('claude')}
             disabled={capturing}
-            className="px-2 py-1 text-xs bg-purple-700 text-white rounded hover:bg-purple-600 disabled:opacity-50 transition-colors"
+            className="rounded bg-purple-700 px-2 py-1 text-xs text-white transition-colors hover:bg-purple-600 disabled:opacity-50"
           >
             → Claude
           </button>
           <button
             onClick={() => handleCapture('codex')}
             disabled={capturing}
-            className="px-2 py-1 text-xs bg-green-700 text-white rounded hover:bg-green-600 disabled:opacity-50 transition-colors"
+            className="rounded bg-green-700 px-2 py-1 text-xs text-white transition-colors hover:bg-green-600 disabled:opacity-50"
           >
             → Codex
           </button>
           <button
-            onClick={() => { setSelectedText(null); const inst = termsRef.current.get(activeSessionRef.current ?? ''); if (inst) inst.term.clearSelection(); }}
+            onClick={() => {
+              setSelectedText(null);
+              const inst = termsRef.current.get(activeSessionRef.current ?? '');
+              if (inst) inst.term.clearSelection();
+            }}
             className="px-1 py-1 text-xs text-gray-400 hover:text-gray-200"
           >
             ✕
@@ -579,17 +544,23 @@ export function TerminalPanel() {
         <div className="absolute right-3 top-3 z-10 flex items-center gap-2 rounded-full border border-gray-800 bg-gray-950/90 px-3 py-1.5 shadow-lg">
           <span className="text-[10px] uppercase tracking-wide text-gray-500">{activeSession.agent}</span>
           <span className="max-w-52 truncate text-xs text-gray-300">{activeSession.name}</span>
-          <button
-            onClick={() => {
-              wsClient.send({ type: 'pty.kill', sessionId: activeSessionRef.current } as any);
-              const inst = termsRef.current.get(activeSessionRef.current!);
-              if (inst) inst.term.writeln('\r\n\x1b[31m[Killed]\x1b[0m');
-              activeSessionRef.current = null;
-            }}
-            className="text-xs text-red-400 hover:text-red-300 transition-colors"
-          >
-            Kill
-          </button>
+          {activeTerm?.connectionState === 'ended' ? (
+            <button
+              onClick={() => startTerminalSession(activeSession.id)}
+              className="text-xs text-red-400 transition-colors hover:text-red-300"
+            >
+              Restart
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                wsClient.send({ type: 'pty.kill', sessionId: activeSessionRef.current! });
+              }}
+              className="text-xs text-red-400 transition-colors hover:text-red-300"
+            >
+              Kill
+            </button>
+          )}
         </div>
       )}
     </div>
