@@ -37,6 +37,10 @@ function toPositiveInteger(value: unknown): number | undefined {
   return normalized > 0 ? normalized : undefined;
 }
 
+function hasMeaningfulSnapshotContent(lines: string[]): boolean {
+  return lines.some((line) => line.trim().length > 0);
+}
+
 export function TerminalPanel() {
   const room = useRoomStore((s) => s.room);
   const sessions = useRoomStore((s) => s.sessions);
@@ -70,7 +74,7 @@ export function TerminalPanel() {
       }
 
       const lines = parsed.lines.map((line) => (typeof line === 'string' ? line : ''));
-      if (lines.length === 0) {
+      if (lines.length === 0 || !hasMeaningfulSnapshotContent(lines)) {
         window.localStorage.removeItem(key);
         return null;
       }
@@ -200,6 +204,11 @@ export function TerminalPanel() {
       lines,
       capturedAt: Date.now(),
     };
+
+    if (!hasMeaningfulSnapshotContent(lines)) {
+      return;
+    }
+
     window.localStorage.setItem(key, JSON.stringify(snapshot));
   }, [getSnapshotKey]);
 
