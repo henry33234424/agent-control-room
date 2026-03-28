@@ -1,6 +1,7 @@
 'use client';
 
 import { useRoomStore } from '@/stores/room-store';
+import { useSelectionStore } from '@/stores/selection-store';
 import { MessageList } from './message-list';
 import { MessageInput } from './message-input';
 import { HandoffBar } from './handoff-bar';
@@ -8,6 +9,8 @@ import { PinnedBriefPanel } from './pinned-brief-panel';
 
 export function ChatPanel() {
   const room = useRoomStore((s) => s.room);
+  const selectedMessageIds = useSelectionStore((s) => s.selectedMessageIds);
+  const hasSelectedMessages = selectedMessageIds.size > 0;
 
   return (
     <div className="flex flex-col h-full bg-gray-950">
@@ -27,7 +30,7 @@ export function ChatPanel() {
       {room && <HandoffBar roomId={room.id} />}
 
       {/* Input */}
-      {room && <MessageInput roomId={room.id} />}
+      {room && !hasSelectedMessages && <MessageInput roomId={room.id} />}
     </div>
   );
 }
