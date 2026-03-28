@@ -16,6 +16,24 @@ const STATUS_COLORS: Record<string, string> = {
   archived: 'bg-gray-300',
 };
 
+type ConfirmDialogState =
+  | {
+      kind: 'project';
+      id: string;
+      title: string;
+      description: string;
+      confirmLabel: string;
+      onConfirm: () => Promise<void>;
+    }
+  | {
+      kind: 'session';
+      id: string;
+      title: string;
+      description: string;
+      confirmLabel: string;
+      onConfirm: () => Promise<void>;
+    };
+
 export function SessionTree() {
   const router = useRouter();
   const room = useRoomStore((s) => s.room);
@@ -35,6 +53,7 @@ export function SessionTree() {
   const [creatingSessionFor, setCreatingSessionFor] = useState<AgentKind | null>(null);
   const [busyRoomId, setBusyRoomId] = useState<string | null>(null);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
 
   useEffect(() => {
     api.rooms.list().then(setRooms).catch((err) => {
@@ -143,40 +162,46 @@ export function SessionTree() {
 
   const handleDeleteProject = async (project: Room) => {
     if (busyRoomId) return;
+    setConfirmDialog({
+      kind: 'project',
+      id: project.id,
+      title: `Delete project "${project.name}"?`,
+      description:
+        'This removes the Control Room record, sessions, messages, runs, and managed worktrees for this project.',
+      confirmLabel: 'Delete Project',
+      onConfirm: async () => {
+        setBusyRoomId(project.id);
+        try {
+          await api.rooms.delete(project.id);
 
-    const confirmed = window.confirm(
-      `Delete project "${project.name}"?\n\nThis removes the Control Room record, sessions, messages, runs, and managed worktrees for this project.`,
-    );
-    if (!confirmed) return;
+          const remainingRooms = rooms.filter((item) => item.id !== project.id);
+          setRooms(remainingRooms);
+          setExpandedRooms((prev) => {
+            const next = new Set(prev);
+            next.delete(project.id);
+            return next;
+          });
 
-    setBusyRoomId(project.id);
-    try {
-      await api.rooms.delete(project.id);
+          if (project.id === currentRoomId) {
+            const fallbackRoom = remainingRooms[0];
+            if (fallbackRoom) {
+              router.push(`/rooms/${fallbackRoom.id}`);
+            } else {
+              setSelectedId(null);
+              setConsoleSession(null);
+              router.push('/');
+            }
+          }
 
-      const remainingRooms = rooms.filter((item) => item.id !== project.id);
-      setRooms(remainingRooms);
-      setExpandedRooms((prev) => {
-        const next = new Set(prev);
-        next.delete(project.id);
-        return next;
-      });
-
-      if (project.id === currentRoomId) {
-        const fallbackRoom = remainingRooms[0];
-        if (fallbackRoom) {
-          router.push(`/rooms/${fallbackRoom.id}`);
-        } else {
-          setSelectedId(null);
-          setConsoleSession(null);
-          router.push('/');
+          setConfirmDialog(null);
+        } catch (err) {
+          console.error(`Failed to delete project ${project.id}:`, err);
+          alert(err instanceof Error ? err.message : 'Failed to delete project');
+        } finally {
+          setBusyRoomId(null);
         }
-      }
-    } catch (err) {
-      console.error(`Failed to delete project ${project.id}:`, err);
-      alert(err instanceof Error ? err.message : 'Failed to delete project');
-    } finally {
-      setBusyRoomId(null);
-    }
+      },
+    });
   };
 
   const handleRenameProject = async (project: Room) => {
@@ -203,29 +228,35 @@ export function SessionTree() {
 
     const session = sessions.find((item) => item.id === sessionId);
     if (!session) return;
+    setConfirmDialog({
+      kind: 'session',
+      id: sessionId,
+      title: `Delete session "${session.name}"?`,
+      description:
+        'This removes its runs, messages, approvals, terminal state, and managed worktree.',
+      confirmLabel: 'Delete Session',
+      onConfirm: async () => {
+        setBusySessionId(sessionId);
+        try {
+          await api.sessions.delete(room.id, sessionId);
+          handleRoomEvent({ type: 'session.deleted', data: { roomId: room.id, sessionId } });
 
-    const confirmed = window.confirm(
-      `Delete session "${session.name}"?\n\nThis removes its runs, messages, approvals, terminal state, and managed worktree.`,
-    );
-    if (!confirmed) return;
+          if (selectedId === sessionId) {
+            const remainingSessions = sessions.filter((item) => item.id !== sessionId);
+            const fallbackSession = remainingSessions[0] ?? null;
+            setSelectedId(fallbackSession?.id ?? null);
+            setConsoleSession(fallbackSession?.id ?? null);
+          }
 
-    setBusySessionId(sessionId);
-    try {
-      await api.sessions.delete(room.id, sessionId);
-      handleRoomEvent({ type: 'session.deleted', data: { roomId: room.id, sessionId } });
-
-      if (selectedId === sessionId) {
-        const remainingSessions = sessions.filter((item) => item.id !== sessionId);
-        const fallbackSession = remainingSessions[0] ?? null;
-        setSelectedId(fallbackSession?.id ?? null);
-        setConsoleSession(fallbackSession?.id ?? null);
-      }
-    } catch (err) {
-      console.error(`Failed to delete session ${sessionId}:`, err);
-      alert(err instanceof Error ? err.message : 'Failed to delete session');
-    } finally {
-      setBusySessionId(null);
-    }
+          setConfirmDialog(null);
+        } catch (err) {
+          console.error(`Failed to delete session ${sessionId}:`, err);
+          alert(err instanceof Error ? err.message : 'Failed to delete session');
+        } finally {
+          setBusySessionId(null);
+        }
+      },
+    });
   };
 
   const handleRenameSession = async (sessionId: string) => {
@@ -361,6 +392,26 @@ export function SessionTree() {
           )}
         </div>
       </div>
+      {confirmDialog && (
+        <ConfirmDialog
+          title={confirmDialog.title}
+          description={confirmDialog.description}
+          confirmLabel={confirmDialog.confirmLabel}
+          busy={
+            confirmDialog.kind === 'project'
+              ? busyRoomId === confirmDialog.id
+              : busySessionId === confirmDialog.id
+          }
+          onCancel={() => {
+            const isBusy =
+              confirmDialog.kind === 'project'
+                ? busyRoomId === confirmDialog.id
+                : busySessionId === confirmDialog.id;
+            if (!isBusy) setConfirmDialog(null);
+          }}
+          onConfirm={confirmDialog.onConfirm}
+        />
+      )}
     </div>
   );
 }
@@ -541,6 +592,73 @@ function ActionMenu({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ConfirmDialog({
+  title,
+  description,
+  confirmLabel,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void | Promise<void>;
+}) {
+  useEffect(() => {
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape' && !busy) {
+        onCancel();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [busy, onCancel]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) {
+          onCancel();
+        }
+      }}
+    >
+      <div className="w-full max-w-md rounded-2xl border border-gray-800 bg-gray-950 p-5 shadow-2xl">
+        <div className="space-y-3">
+          <div>
+            <h3 className="text-base font-semibold text-gray-100">{title}</h3>
+            <p className="mt-2 text-sm leading-6 text-gray-400">{description}</p>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={busy}
+              className="rounded-lg border border-gray-700 px-3 py-2 text-sm text-gray-200 transition-colors hover:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void onConfirm()}
+              disabled={busy}
+              className="rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy ? 'Deleting...' : confirmLabel}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
