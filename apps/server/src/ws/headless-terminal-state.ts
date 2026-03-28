@@ -1,5 +1,8 @@
+import { createRequire } from 'node:module';
 import { SerializeAddon } from '@xterm/addon-serialize';
-import { Terminal } from '@xterm/headless';
+
+const require_ = createRequire(import.meta.url);
+const { Terminal: HeadlessTerminal } = require_('@xterm/headless') as typeof import('@xterm/headless');
 
 export interface TerminalRestoreSnapshot {
   cols: number;
@@ -9,12 +12,12 @@ export interface TerminalRestoreSnapshot {
 }
 
 export class HeadlessTerminalState {
-  private terminal: Terminal;
+  private terminal: import('@xterm/headless').Terminal;
   private serializeAddon: SerializeAddon;
   private queue = Promise.resolve();
 
   constructor(cols: number, rows: number, scrollback = 10_000) {
-    this.terminal = new Terminal({
+    this.terminal = new HeadlessTerminal({
       cols,
       rows,
       scrollback,
