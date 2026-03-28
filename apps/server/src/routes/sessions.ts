@@ -6,15 +6,41 @@ import { roomChannel } from '../ws/room-channel.js';
 import { ptyManager } from '../ws/pty-manager.js';
 import { removeWorktree } from '@control-room/git-worktree';
 
+function normalizeSessionName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+async function hasSessionNameConflict(
+  roomId: string,
+  name: string,
+  excludeSessionId?: string,
+): Promise<boolean> {
+  const sessions = await prisma.agentSession.findMany({
+    where: { roomId },
+    select: { id: true, name: true },
+  });
+
+  const normalized = normalizeSessionName(name);
+  return sessions.some(
+    (session) =>
+      session.id !== excludeSessionId && normalizeSessionName(session.name) === normalized,
+  );
+}
+
 export async function sessionRoutes(app: FastifyInstance) {
   app.post<{ Params: { roomId: string }; Body: CreateSessionRequest }>(
     '/api/rooms/:roomId/sessions',
     async (req, reply) => {
       const { roomId } = req.params;
-      const { agent, name, mode } = req.body;
+      const { agent, mode } = req.body;
+      const name = req.body.name.trim();
 
       const room = await prisma.room.findUnique({ where: { id: roomId } });
       if (!room) return reply.status(404).send({ error: 'Room not found' });
+      if (!name) return reply.status(400).send({ error: 'Session name is required' });
+      if (await hasSessionNameConflict(roomId, name)) {
+        return reply.status(409).send({ error: 'Session name already exists in this project' });
+      }
 
       const session = await prisma.agentSession.create({
         data: { roomId, agent, name, mode: mode ?? 'readWrite' },
@@ -51,6 +77,9 @@ export async function sessionRoutes(app: FastifyInstance) {
         where: { id: sessionId, roomId },
       });
       if (!existing) return reply.status(404).send({ error: 'Session not found' });
+      if (await hasSessionNameConflict(roomId, name, sessionId)) {
+        return reply.status(409).send({ error: 'Session name already exists in this project' });
+      }
 
       const updated = await prisma.agentSession.update({
         where: { id: sessionId },
