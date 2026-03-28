@@ -32,6 +32,7 @@ export function SessionTree() {
   const [projectPath, setProjectPath] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
   const [creatingSessionFor, setCreatingSessionFor] = useState<AgentKind | null>(null);
+  const [deletingRoomId, setDeletingRoomId] = useState<string | null>(null);
 
   useEffect(() => {
     api.rooms.list().then(setRooms).catch((err) => {
@@ -133,6 +134,44 @@ export function SessionTree() {
     }
   };
 
+  const handleDeleteProject = async (project: Room) => {
+    if (deletingRoomId) return;
+
+    const confirmed = window.confirm(
+      `Delete project "${project.name}"?\n\nThis removes the Control Room record, sessions, messages, runs, and managed worktrees for this project.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingRoomId(project.id);
+    try {
+      await api.rooms.delete(project.id);
+
+      const remainingRooms = rooms.filter((item) => item.id !== project.id);
+      setRooms(remainingRooms);
+      setExpandedRooms((prev) => {
+        const next = new Set(prev);
+        next.delete(project.id);
+        return next;
+      });
+
+      if (project.id === currentRoomId) {
+        const fallbackRoom = remainingRooms[0];
+        if (fallbackRoom) {
+          router.push(`/rooms/${fallbackRoom.id}`);
+        } else {
+          setSelectedId(null);
+          setConsoleSession(null);
+          router.push('/');
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to delete project ${project.id}:`, err);
+      alert(err instanceof Error ? err.message : 'Failed to delete project');
+    } finally {
+      setDeletingRoomId(null);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="p-3 border-b border-gray-700">
@@ -145,21 +184,35 @@ export function SessionTree() {
 
           return (
             <div key={project.id} className="rounded-lg border border-gray-800/80 bg-gray-950/40 overflow-hidden">
-              <button
-                onClick={() => toggleRoom(project.id)}
-                className={`w-full flex items-center gap-2 px-2.5 py-2 text-left transition-colors ${
-                  isCurrent ? 'bg-gray-800/90 text-white' : 'text-gray-300 hover:bg-gray-900'
+              <div
+                className={`flex items-center gap-1 px-1.5 py-1 ${
+                  isCurrent ? 'bg-gray-800/90 text-white' : 'text-gray-300'
                 }`}
               >
-                <span className="text-[11px] text-gray-500">{isExpanded && isCurrent ? 'v' : '>'}</span>
-                <span className="text-[10px] uppercase tracking-wide text-gray-500">dir</span>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{project.name}</div>
-                  <div className="truncate text-[10px] text-gray-500">
-                    {project.repoPath.split('/').filter(Boolean).pop()}
+                <button
+                  onClick={() => toggleRoom(project.id)}
+                  className={`flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-1 text-left transition-colors ${
+                    isCurrent ? 'hover:bg-gray-700/60' : 'hover:bg-gray-900'
+                  }`}
+                >
+                  <span className="text-[11px] text-gray-500">{isExpanded && isCurrent ? 'v' : '>'}</span>
+                  <span className="text-[10px] uppercase tracking-wide text-gray-500">dir</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{project.name}</div>
+                    <div className="truncate text-[10px] text-gray-500">
+                      {project.repoPath.split('/').filter(Boolean).pop()}
+                    </div>
                   </div>
-                </div>
-              </button>
+                </button>
+                <button
+                  onClick={() => handleDeleteProject(project)}
+                  disabled={deletingRoomId === project.id}
+                  title={`Delete ${project.name}`}
+                  className="rounded px-2 py-1 text-xs font-semibold text-red-400 transition-colors hover:bg-red-950/60 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {deletingRoomId === project.id ? '...' : 'Del'}
+                </button>
+              </div>
 
               {isCurrent && isExpanded && (
                 <div className="border-t border-gray-800 bg-gray-950/60">
