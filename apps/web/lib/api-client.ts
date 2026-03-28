@@ -5,7 +5,9 @@ import type {
   ChatMessage,
   RuntimeEvent,
   CreateRoomRequest,
+  UpdateRoomRequest,
   CreateSessionRequest,
+  UpdateSessionRequest,
   SendMessageRequest,
   CreateHandoffRequest,
   CreatePinRequest,
@@ -49,6 +51,8 @@ export const api = {
     get: (id: string) => request<RoomSnapshot>(`/api/rooms/${id}`),
     create: (data: CreateRoomRequest) =>
       request<Room>('/api/rooms', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: UpdateRoomRequest) =>
+      request<Room>(`/api/rooms/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     delete: (id: string) => request<{ ok: boolean }>(`/api/rooms/${id}`, { method: 'DELETE' }),
   },
   sessions: {
@@ -57,6 +61,15 @@ export const api = {
       request<AgentSession>(`/api/rooms/${roomId}/sessions`, {
         method: 'POST',
         body: JSON.stringify(data),
+      }),
+    update: (roomId: string, sessionId: string, data: UpdateSessionRequest) =>
+      request<AgentSession>(`/api/rooms/${roomId}/sessions/${sessionId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    delete: (roomId: string, sessionId: string) =>
+      request<{ ok: boolean }>(`/api/rooms/${roomId}/sessions/${sessionId}`, {
+        method: 'DELETE',
       }),
   },
   messages: {

@@ -109,6 +109,11 @@ export interface WsSessionUpdated {
   data: AgentSession;
 }
 
+export interface WsSessionDeleted {
+  type: 'session.deleted';
+  data: { roomId: string; sessionId: string };
+}
+
 export interface WsApprovalRequested {
   type: 'approval.requested';
   data: Approval;
@@ -165,6 +170,7 @@ export type ServerWsEvent =
   | WsRunStatus
   | WsSessionStatus
   | WsSessionUpdated
+  | WsSessionDeleted
   | WsApprovalRequested
   | WsApprovalResolved
   | WsPinUpdated

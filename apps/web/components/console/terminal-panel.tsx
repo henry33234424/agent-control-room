@@ -256,13 +256,19 @@ export function TerminalPanel() {
 
   // Switch visible terminal when selected session changes
   useEffect(() => {
-    if (!loaded || !selectedSessionId) return;
-
-    const session = sessions.find((item) => item.id === selectedSessionId);
-    if (!session || !room) return;
-
     for (const inst of termsRef.current.values()) {
       inst.container.style.display = 'none';
+    }
+
+    if (!loaded || !selectedSessionId) {
+      activeSessionRef.current = null;
+      return;
+    }
+
+    const session = sessions.find((item) => item.id === selectedSessionId);
+    if (!session || !room) {
+      activeSessionRef.current = null;
+      return;
     }
 
     const inst = getOrCreateTerm(selectedSessionId);

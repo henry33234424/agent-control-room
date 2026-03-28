@@ -10,12 +10,20 @@ export interface CreateRoomRequest {
   defaultBranch?: string;
 }
 
+export interface UpdateRoomRequest {
+  name: string;
+}
+
 // ── Session ──
 
 export interface CreateSessionRequest {
   agent: AgentKind;
   name: string;
   mode?: SessionMode;
+}
+
+export interface UpdateSessionRequest {
+  name: string;
 }
 
 // ── Message ──

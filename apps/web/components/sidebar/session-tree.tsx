@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useRoomStore } from '@/stores/room-store';
 import { useUIStore } from '@/stores/ui-store';
@@ -19,6 +19,7 @@ const STATUS_COLORS: Record<string, string> = {
 export function SessionTree() {
   const router = useRouter();
   const room = useRoomStore((s) => s.room);
+  const updateRoom = useRoomStore((s) => s.updateRoom);
   const handleRoomEvent = useRoomStore((s) => s.handleWsEvent);
   const sessions = useRoomStore((s) => s.sessions);
   const selectedId = useUIStore((s) => s.selectedSessionId);
@@ -32,7 +33,8 @@ export function SessionTree() {
   const [projectPath, setProjectPath] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
   const [creatingSessionFor, setCreatingSessionFor] = useState<AgentKind | null>(null);
-  const [deletingRoomId, setDeletingRoomId] = useState<string | null>(null);
+  const [busyRoomId, setBusyRoomId] = useState<string | null>(null);
+  const [busySessionId, setBusySessionId] = useState<string | null>(null);
 
   useEffect(() => {
     api.rooms.list().then(setRooms).catch((err) => {
@@ -49,6 +51,11 @@ export function SessionTree() {
       return next;
     });
   }, [room?.id]);
+
+  useEffect(() => {
+    if (!room) return;
+    setRooms((prev) => prev.map((item) => (item.id === room.id ? room : item)));
+  }, [room]);
 
   const handleSelect = (id: string) => {
     setSelectedId(id);
@@ -135,14 +142,14 @@ export function SessionTree() {
   };
 
   const handleDeleteProject = async (project: Room) => {
-    if (deletingRoomId) return;
+    if (busyRoomId) return;
 
     const confirmed = window.confirm(
       `Delete project "${project.name}"?\n\nThis removes the Control Room record, sessions, messages, runs, and managed worktrees for this project.`,
     );
     if (!confirmed) return;
 
-    setDeletingRoomId(project.id);
+    setBusyRoomId(project.id);
     try {
       await api.rooms.delete(project.id);
 
@@ -168,7 +175,77 @@ export function SessionTree() {
       console.error(`Failed to delete project ${project.id}:`, err);
       alert(err instanceof Error ? err.message : 'Failed to delete project');
     } finally {
-      setDeletingRoomId(null);
+      setBusyRoomId(null);
+    }
+  };
+
+  const handleRenameProject = async (project: Room) => {
+    if (busyRoomId) return;
+
+    const nextName = window.prompt('Rename project', project.name)?.trim();
+    if (!nextName || nextName === project.name) return;
+
+    setBusyRoomId(project.id);
+    try {
+      const updated = await api.rooms.update(project.id, { name: nextName });
+      setRooms((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      updateRoom(updated);
+    } catch (err) {
+      console.error(`Failed to rename project ${project.id}:`, err);
+      alert(err instanceof Error ? err.message : 'Failed to rename project');
+    } finally {
+      setBusyRoomId(null);
+    }
+  };
+
+  const handleDeleteSession = async (sessionId: string) => {
+    if (!room || busySessionId) return;
+
+    const session = sessions.find((item) => item.id === sessionId);
+    if (!session) return;
+
+    const confirmed = window.confirm(
+      `Delete session "${session.name}"?\n\nThis removes its runs, messages, approvals, terminal state, and managed worktree.`,
+    );
+    if (!confirmed) return;
+
+    setBusySessionId(sessionId);
+    try {
+      await api.sessions.delete(room.id, sessionId);
+      handleRoomEvent({ type: 'session.deleted', data: { roomId: room.id, sessionId } });
+
+      if (selectedId === sessionId) {
+        const remainingSessions = sessions.filter((item) => item.id !== sessionId);
+        const fallbackSession = remainingSessions[0] ?? null;
+        setSelectedId(fallbackSession?.id ?? null);
+        setConsoleSession(fallbackSession?.id ?? null);
+      }
+    } catch (err) {
+      console.error(`Failed to delete session ${sessionId}:`, err);
+      alert(err instanceof Error ? err.message : 'Failed to delete session');
+    } finally {
+      setBusySessionId(null);
+    }
+  };
+
+  const handleRenameSession = async (sessionId: string) => {
+    if (!room || busySessionId) return;
+
+    const session = sessions.find((item) => item.id === sessionId);
+    if (!session) return;
+
+    const nextName = window.prompt('Rename session', session.name)?.trim();
+    if (!nextName || nextName === session.name) return;
+
+    setBusySessionId(sessionId);
+    try {
+      const updated = await api.sessions.update(room.id, sessionId, { name: nextName });
+      handleRoomEvent({ type: 'session.updated', data: updated });
+    } catch (err) {
+      console.error(`Failed to rename session ${sessionId}:`, err);
+      alert(err instanceof Error ? err.message : 'Failed to rename session');
+    } finally {
+      setBusySessionId(null);
     }
   };
 
@@ -183,7 +260,7 @@ export function SessionTree() {
           const isExpanded = expandedRooms.has(project.id);
 
           return (
-            <div key={project.id} className="rounded-lg border border-gray-800/80 bg-gray-950/40 overflow-hidden">
+            <div key={project.id} className="rounded-lg border border-gray-800/80 bg-gray-950/40 overflow-visible">
               <div
                 className={`flex items-center gap-1 px-1.5 py-1 ${
                   isCurrent ? 'bg-gray-800/90 text-white' : 'text-gray-300'
@@ -204,14 +281,14 @@ export function SessionTree() {
                     </div>
                   </div>
                 </button>
-                <button
-                  onClick={() => handleDeleteProject(project)}
-                  disabled={deletingRoomId === project.id}
-                  title={`Delete ${project.name}`}
-                  className="rounded px-2 py-1 text-xs font-semibold text-red-400 transition-colors hover:bg-red-950/60 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {deletingRoomId === project.id ? '...' : 'Del'}
-                </button>
+                <ActionMenu
+                  title={`${project.name} actions`}
+                  disabled={busyRoomId === project.id}
+                  actions={[
+                    { label: 'Rename', onSelect: () => handleRenameProject(project) },
+                    { label: 'Delete', danger: true, onSelect: () => handleDeleteProject(project) },
+                  ]}
+                />
               </div>
 
               {isCurrent && isExpanded && (
@@ -225,7 +302,10 @@ export function SessionTree() {
                     onToggle={() => toggleAgent('claude')}
                     onSelect={handleSelect}
                     onCreate={() => handleCreateSession('claude')}
+                    onRename={handleRenameSession}
+                    onDelete={handleDeleteSession}
                     creating={creatingSessionFor === 'claude'}
+                    busySessionId={busySessionId}
                   />
                   <AgentGroup
                     agent="codex"
@@ -236,7 +316,10 @@ export function SessionTree() {
                     onToggle={() => toggleAgent('codex')}
                     onSelect={handleSelect}
                     onCreate={() => handleCreateSession('codex')}
+                    onRename={handleRenameSession}
+                    onDelete={handleDeleteSession}
                     creating={creatingSessionFor === 'codex'}
+                    busySessionId={busySessionId}
                   />
                 </div>
               )}
@@ -291,7 +374,10 @@ function AgentGroup({
   onToggle,
   onSelect,
   onCreate,
+  onRename,
+  onDelete,
   creating,
+  busySessionId,
 }: {
   agent: AgentKind;
   label: string;
@@ -308,7 +394,10 @@ function AgentGroup({
   onToggle: () => void;
   onSelect: (id: string) => void;
   onCreate: () => void;
+  onRename: (id: string) => void;
+  onDelete: (id: string) => void;
   creating: boolean;
+  busySessionId: string | null;
 }) {
   return (
     <div className="px-1 py-1">
@@ -338,32 +427,118 @@ function AgentGroup({
             <div className="text-xs text-gray-500 px-2 py-1">No sessions</div>
           ) : (
             sessions.map((s) => (
-              <button
+              <div
                 key={s.id}
-                onClick={() => onSelect(s.id)}
-                className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center gap-2 transition-colors ${
-                  selectedId === s.id
-                    ? 'bg-gray-700 text-white'
-                    : 'text-gray-300 hover:bg-gray-800'
+                className={`flex items-start gap-1 rounded ${
+                  selectedId === s.id ? 'bg-gray-700 text-white' : 'text-gray-300'
                 }`}
               >
-                <span className="text-gray-600">└</span>
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_COLORS[s.status] ?? 'bg-gray-400'}`} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate">{s.name}</span>
-                    <span className="text-[10px] uppercase text-gray-500 flex-shrink-0">{s.status}</span>
+                <button
+                  onClick={() => onSelect(s.id)}
+                  className={`flex min-w-0 flex-1 items-start gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors ${
+                    selectedId === s.id
+                      ? 'hover:bg-gray-600/60'
+                      : 'hover:bg-gray-800'
+                  }`}
+                >
+                  <span className="text-gray-600">└</span>
+                  <span className={`mt-1 h-2 w-2 flex-shrink-0 rounded-full ${STATUS_COLORS[s.status] ?? 'bg-gray-400'}`} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate">{s.name}</span>
+                      <span className="flex-shrink-0 text-[10px] uppercase text-gray-500">{s.status}</span>
+                    </div>
+                    <div className="truncate text-[10px] text-gray-500">
+                      {formatSessionMeta(s.metadata, s.mode)}
+                    </div>
+                    <div className="text-[10px] text-gray-600">
+                      {new Date(s.updatedAt).toLocaleTimeString('en-US', { hour12: false })}
+                    </div>
                   </div>
-                  <div className="text-[10px] text-gray-500 truncate">
-                    {formatSessionMeta(s.metadata, s.mode)}
-                  </div>
-                  <div className="text-[10px] text-gray-600">
-                    {new Date(s.updatedAt).toLocaleTimeString('en-US', { hour12: false })}
-                  </div>
-                </div>
-              </button>
+                </button>
+                <ActionMenu
+                  title={`${s.name} actions`}
+                  disabled={busySessionId === s.id}
+                  actions={[
+                    { label: 'Rename', onSelect: () => onRename(s.id) },
+                    { label: 'Delete', danger: true, onSelect: () => onDelete(s.id) },
+                  ]}
+                />
+              </div>
             ))
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActionMenu({
+  title,
+  actions,
+  disabled = false,
+}: {
+  title: string;
+  actions: Array<{ label: string; onSelect: () => void; danger?: boolean }>;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative flex-shrink-0">
+      <button
+        onClick={(event) => {
+          event.stopPropagation();
+          if (!disabled) setOpen((prev) => !prev);
+        }}
+        disabled={disabled}
+        title={title}
+        className="rounded px-2 py-1 text-sm font-semibold text-gray-500 transition-colors hover:bg-gray-900 hover:text-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        …
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-1 min-w-28 rounded-lg border border-gray-800 bg-gray-950/98 p-1 shadow-2xl">
+          {actions.map((action) => (
+            <button
+              key={action.label}
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpen(false);
+                action.onSelect();
+              }}
+              className={`block w-full rounded px-3 py-1.5 text-left text-xs transition-colors ${
+                action.danger
+                  ? 'text-red-400 hover:bg-red-950/60 hover:text-red-300'
+                  : 'text-gray-200 hover:bg-gray-900'
+              }`}
+            >
+              {action.label}
+            </button>
+          ))}
         </div>
       )}
     </div>

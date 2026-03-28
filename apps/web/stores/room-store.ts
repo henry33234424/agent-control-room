@@ -23,9 +23,11 @@ interface RoomState {
     pinnedBrief: PinnedBriefItem[];
     pendingApprovals: Approval[];
   }) => void;
+  updateRoom: (room: Partial<Room> & { id: string }) => void;
   addMessage: (msg: ChatMessage) => void;
   updateMessage: (msg: ChatMessage) => void;
   updateSession: (session: Partial<AgentSession> & { id: string }) => void;
+  removeSession: (sessionId: string) => void;
   addApproval: (approval: Approval) => void;
   resolveApproval: (id: string) => void;
   handleWsEvent: (event: ServerWsEvent) => void;
@@ -47,6 +49,13 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       pendingApprovals: data.pendingApprovals,
     }),
 
+  updateRoom: (partial) =>
+    set((state) => ({
+      room: state.room && state.room.id === partial.id
+        ? { ...state.room, ...partial }
+        : state.room,
+    })),
+
   addMessage: (msg) =>
     set((state) => ({ messages: [...state.messages, msg] })),
 
@@ -62,6 +71,13 @@ export const useRoomStore = create<RoomState>((set, get) => ({
           s.id === partial.id ? { ...s, ...partial } : s,
         )
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    })),
+
+  removeSession: (sessionId) =>
+    set((state) => ({
+      sessions: state.sessions.filter((s) => s.id !== sessionId),
+      messages: state.messages.filter((msg) => msg.sessionId !== sessionId),
+      pendingApprovals: state.pendingApprovals.filter((approval) => approval.sessionId !== sessionId),
     })),
 
   addApproval: (approval) =>
@@ -110,6 +126,9 @@ export const useRoomStore = create<RoomState>((set, get) => ({
         }
         break;
       }
+      case 'session.deleted':
+        state.removeSession(event.data.sessionId);
+        break;
       case 'approval.requested':
         state.addApproval(event.data);
         break;

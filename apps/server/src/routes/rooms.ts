@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
-import type { CreateRoomRequest } from '@control-room/shared-types';
+import type { CreateRoomRequest, UpdateRoomRequest } from '@control-room/shared-types';
 import { existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { toRoomDto, toSessionDto, toMessageDto, toPinDto } from '../lib/dto.js';
@@ -59,6 +59,25 @@ export async function roomRoutes(app: FastifyInstance) {
     const rooms = await prisma.room.findMany({ orderBy: { updatedAt: 'desc' } });
     return rooms.map(toRoomDto);
   });
+
+  app.patch<{ Params: { roomId: string }; Body: UpdateRoomRequest }>(
+    '/api/rooms/:roomId',
+    async (req, reply) => {
+      const { roomId } = req.params;
+      const name = req.body.name.trim();
+      if (!name) return reply.status(400).send({ error: 'Room name is required' });
+
+      const room = await prisma.room.findUnique({ where: { id: roomId } });
+      if (!room) return reply.status(404).send({ error: 'Room not found' });
+
+      const updated = await prisma.room.update({
+        where: { id: roomId },
+        data: { name },
+      });
+
+      return toRoomDto(updated);
+    },
+  );
 
   // Delete room and all associated data
   app.delete<{ Params: { roomId: string } }>('/api/rooms/:roomId', async (req, reply) => {
