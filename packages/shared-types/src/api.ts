@@ -8,6 +8,7 @@ export interface CreateRoomRequest {
   name: string;
   repoPath: string;
   defaultBranch?: string;
+  initializeGitIfMissing?: boolean;
 }
 
 export interface UpdateRoomRequest {

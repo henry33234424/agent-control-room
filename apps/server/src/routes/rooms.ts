@@ -2,29 +2,51 @@ import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import type { CreateRoomRequest, UpdateRoomRequest } from '@control-room/shared-types';
 import { existsSync } from 'node:fs';
-import { execSync } from 'node:child_process';
 import { toRoomDto, toSessionDto, toMessageDto, toPinDto } from '../lib/dto.js';
-import { removeWorktree } from '@control-room/git-worktree';
+import { initRepository, isGitRepository, removeWorktree } from '@control-room/git-worktree';
 import { approvalService } from '../services/approval-service.js';
 
 const RECENT_MESSAGE_LIMIT = 200;
 
+function getErrorMessage(err: unknown): string {
+  if (err && typeof err === 'object' && 'stderr' in err) {
+    const stderr = (err as { stderr?: Buffer | string }).stderr;
+    const message = typeof stderr === 'string' ? stderr.trim() : stderr?.toString().trim();
+    if (message) return message;
+  }
+
+  return err instanceof Error ? err.message : String(err);
+}
+
 export async function roomRoutes(app: FastifyInstance) {
   // Create room
   app.post<{ Body: CreateRoomRequest }>('/api/rooms', async (req, reply) => {
-    const { name, repoPath, defaultBranch } = req.body;
+    const { name, repoPath, defaultBranch, initializeGitIfMissing } = req.body;
+    const baseBranch = defaultBranch ?? 'main';
 
     if (!existsSync(repoPath)) {
       return reply.status(400).send({ error: `Path does not exist: ${repoPath}` });
     }
-    try {
-      execSync('git rev-parse --is-inside-work-tree', { cwd: repoPath, stdio: 'pipe' });
-    } catch {
-      return reply.status(400).send({ error: `Not a git repository: ${repoPath}` });
+
+    if (!isGitRepository(repoPath)) {
+      if (!initializeGitIfMissing) {
+        return reply.status(400).send({ error: `Not a git repository: ${repoPath}` });
+      }
+
+      try {
+        initRepository({
+          repoPath,
+          baseBranch,
+        });
+      } catch (err) {
+        return reply.status(400).send({
+          error: `Failed to initialize git repository at ${repoPath}: ${getErrorMessage(err)}`,
+        });
+      }
     }
 
     const room = await prisma.room.create({
-      data: { name, repoPath, defaultBranch: defaultBranch ?? 'main' },
+      data: { name, repoPath, defaultBranch: baseBranch },
     });
 
     return toRoomDto(room);

@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -13,6 +13,56 @@ export function worktreePath(baseDir: string, agent: string, sessionKey: string)
 
 export function branchName(agent: string, sessionKey: string): string {
   return `agent/${agent}/${sessionKey}`;
+}
+
+export function isGitRepository(repoPath: string): boolean {
+  try {
+    execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function initRepository(input: {
+  repoPath: string;
+  baseBranch: string;
+}): void {
+  execFileSync('git', ['init'], {
+    cwd: input.repoPath,
+    stdio: 'pipe',
+  });
+
+  execFileSync('git', ['symbolic-ref', 'HEAD', `refs/heads/${input.baseBranch}`], {
+    cwd: input.repoPath,
+    stdio: 'pipe',
+  });
+
+  execFileSync('git', ['add', '-A'], {
+    cwd: input.repoPath,
+    stdio: 'pipe',
+  });
+
+  execFileSync(
+    'git',
+    [
+      '-c',
+      'user.name=Control Room',
+      '-c',
+      'user.email=control-room@local',
+      'commit',
+      '--allow-empty',
+      '-m',
+      'Initialize Control Room repository',
+    ],
+    {
+      cwd: input.repoPath,
+      stdio: 'pipe',
+    },
+  );
 }
 
 export function ensureWorktree(input: {
@@ -30,7 +80,7 @@ export function ensureWorktree(input: {
   }
 
   // Create the worktree with a new branch from baseBranch
-  execSync(`git worktree add -b "${branch}" "${path}" "${input.baseBranch}"`, {
+  execFileSync('git', ['worktree', 'add', '-b', branch, path, input.baseBranch], {
     cwd: input.repoPath,
     stdio: 'pipe',
   });
@@ -40,7 +90,7 @@ export function ensureWorktree(input: {
 
 export function removeWorktree(repoPath: string, wtPath: string): void {
   try {
-    execSync(`git worktree remove "${wtPath}" --force`, {
+    execFileSync('git', ['worktree', 'remove', wtPath, '--force'], {
       cwd: repoPath,
       stdio: 'pipe',
     });
@@ -50,7 +100,7 @@ export function removeWorktree(repoPath: string, wtPath: string): void {
 }
 
 export function listWorktrees(repoPath: string): WorktreeInfo[] {
-  const output = execSync('git worktree list --porcelain', {
+  const output = execFileSync('git', ['worktree', 'list', '--porcelain'], {
     cwd: repoPath,
     encoding: 'utf-8',
   });

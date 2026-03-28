@@ -49,6 +49,7 @@ export function SessionTree() {
   const [addingProject, setAddingProject] = useState(false);
   const [projectName, setProjectName] = useState('');
   const [projectPath, setProjectPath] = useState('');
+  const [initializeGitIfMissing, setInitializeGitIfMissing] = useState(true);
   const [creatingProject, setCreatingProject] = useState(false);
   const [creatingSessionFor, setCreatingSessionFor] = useState<AgentKind | null>(null);
   const [busyRoomId, setBusyRoomId] = useState<string | null>(null);
@@ -121,10 +122,12 @@ export function SessionTree() {
       const created = await api.rooms.create({
         name: projectName.trim(),
         repoPath: projectPath.trim(),
+        initializeGitIfMissing,
       });
       setRooms((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
       setProjectName('');
       setProjectPath('');
+      setInitializeGitIfMissing(true);
       setAddingProject(false);
       router.push(`/rooms/${created.id}`);
     } catch (err) {
@@ -381,6 +384,20 @@ export function SessionTree() {
                 placeholder="Absolute repo path"
                 className="w-full rounded border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
               />
+              <label className="flex items-start gap-2 text-[11px] text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={initializeGitIfMissing}
+                  onChange={(e) => setInitializeGitIfMissing(e.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5 rounded border border-gray-600 bg-gray-900 text-blue-500"
+                />
+                <span>
+                  Initialize Git if missing
+                  <span className="block text-[10px] text-gray-500">
+                    Creates a repo and an initial commit from the current folder contents.
+                  </span>
+                </span>
+              </label>
               <button
                 onClick={handleCreateProject}
                 disabled={creatingProject || !projectName.trim() || !projectPath.trim()}
