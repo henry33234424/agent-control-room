@@ -460,7 +460,7 @@ export function TerminalPanel() {
   };
 
   return (
-    <div className="relative h-full min-h-0 overflow-hidden bg-[#0a0e14]">
+    <div className="relative h-full min-h-0 bg-[#0a0e14]">
       <div ref={wrapperRef} className="absolute inset-0" />
 
       {!room && (
