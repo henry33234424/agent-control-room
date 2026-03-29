@@ -106,6 +106,18 @@ export function TerminalPanel() {
       wsClient.send({ type: 'pty.input', sessionId, data });
     });
 
+    // TUI programs (Claude/Codex) enable mouse capture mode, which makes
+    // xterm.js forward wheel events to PTY instead of scrolling locally.
+    // We intercept wheel events and always scroll the terminal buffer.
+    const viewportEl = container.querySelector('.xterm-viewport');
+    const scrollTarget = viewportEl ?? container;
+    scrollTarget.addEventListener('wheel', (e: Event) => {
+      const we = e as WheelEvent;
+      we.stopPropagation();
+      const lines = Math.ceil(Math.abs(we.deltaY) / 25) * (we.deltaY > 0 ? 1 : -1);
+      term.scrollLines(lines);
+    }, { passive: true });
+
     term.onSelectionChange(() => {
       const sel = term.getSelection();
       setSelectedText(sel && sel.trim() ? sel.trim() : null);
