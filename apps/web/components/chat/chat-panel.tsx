@@ -13,7 +13,7 @@ export function ChatPanel() {
   const hasSelectedMessages = selectedMessageIds.size > 0;
 
   return (
-    <div className="flex min-h-full flex-col bg-gray-950">
+    <div className="flex flex-col h-full bg-gray-950">
       {/* Header */}
       <div className="shrink-0 border-b border-gray-800 bg-gray-900 p-3">
         <h2 className="text-sm font-bold text-gray-200">Context</h2>

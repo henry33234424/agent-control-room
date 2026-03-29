@@ -274,7 +274,7 @@ export function SessionTree() {
   };
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex flex-col h-full">
       <div className="p-3 border-b border-gray-700">
         <h2 className="text-sm font-bold text-gray-200 uppercase tracking-wider">Projects</h2>
       </div>

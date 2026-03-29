@@ -73,7 +73,7 @@ export default function RoomPage() {
   return (
     <ResizablePanels
       left={
-        <div className="h-full min-h-0 bg-gray-900">
+        <div className="h-full bg-gray-900">
           <SessionTree />
         </div>
       }
