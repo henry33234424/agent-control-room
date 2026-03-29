@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "lint": "tsc --noEmit",
     "start": "node dist/index.js",
     "prisma:migrate": "node scripts/prisma-with-dotenv.mjs migrate dev --schema ../../prisma/schema.prisma",
     "prisma:generate": "node scripts/prisma-with-dotenv.mjs generate --schema ../../prisma/schema.prisma",

@@ -12,15 +12,26 @@ import { CenterPanel } from '@/components/console/center-panel';
 import { ChatPanel } from '@/components/chat/chat-panel';
 import { ResizablePanels } from '@/components/layout/resizable-panels';
 
+function storageKey(roomId: string): string {
+  return `control-room:last-session:${roomId}`;
+}
+
 export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const [loading, setLoading] = useState(true);
   const setSnapshot = useRoomStore((s) => s.setSnapshot);
+  const selectedSessionId = useUIStore((s) => s.selectedSessionId);
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
   const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
 
   // Connect WebSocket after initial HTTP snapshot is loaded to avoid HTTP/WS snapshot races.
   useWebSocket(roomId, !loading);
+
+  useEffect(() => {
+    if (!roomId || !selectedSessionId) return;
+
+    window.localStorage.setItem(storageKey(roomId), selectedSessionId);
+  }, [roomId, selectedSessionId]);
 
   // Load initial snapshot + auto-select most recent session
   useEffect(() => {
@@ -37,11 +48,16 @@ export default function RoomPage() {
       .then((snapshot) => {
         setSnapshot(snapshot);
 
-        // Auto-select the most recently updated session
+        const preferredSessionId = window.localStorage.getItem(storageKey(roomId));
+        const preferredSession = preferredSessionId
+          ? snapshot.sessions.find((session) => session.id === preferredSessionId)
+          : undefined;
+
+        // Prefer the last selected session for this room, then fall back to the most recent one.
         if (snapshot.sessions.length > 0) {
-          const mostRecent = snapshot.sessions[0]; // already sorted by updatedAt desc
-          setSelectedSessionId(mostRecent.id);
-          setConsoleSession(mostRecent.id);
+          const sessionToSelect = preferredSession ?? snapshot.sessions[0];
+          setSelectedSessionId(sessionToSelect.id);
+          setConsoleSession(sessionToSelect.id);
         }
       })
       .finally(() => setLoading(false));

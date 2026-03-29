@@ -4,20 +4,42 @@ import { roomChannel } from './room-channel.js';
 import { prisma } from '../db.js';
 import { toRoomDto, toSessionDto, toMessageDto, toPinDto } from '../lib/dto.js';
 import { approvalService } from '../services/approval-service.js';
+import { buildInteractiveCommand } from '../services/interactive-command.js';
+import { interactiveTerminalStateService } from '../services/interactive-terminal-state-service.js';
 import { sessionService } from '../services/session-service.js';
 import { ptyManager } from './pty-manager.js';
-import { config } from '../config.js';
 
 const RECENT_MESSAGE_LIMIT = 200;
+const HEARTBEAT_INTERVAL_MS = 15000;
+const HEARTBEAT_TIMEOUT_MS = 45000;
 
 export async function registerWebSocket(app: FastifyInstance) {
   app.get('/ws', { websocket: true }, (socket, req) => {
     const ws = socket;
     let subscribedRoomId: string | null = null;
+    let lastClientActivityAt = Date.now();
+
+    const heartbeatTimer = setInterval(() => {
+      if (ws.readyState !== 1) {
+        return;
+      }
+
+      if (Date.now() - lastClientActivityAt > HEARTBEAT_TIMEOUT_MS) {
+        ws.close(4000, 'Heartbeat timeout');
+        return;
+      }
+
+      ws.send(JSON.stringify({ type: 'ws.ping' }));
+    }, HEARTBEAT_INTERVAL_MS);
 
     ws.on('message', async (raw: Buffer) => {
       try {
         const msg = JSON.parse(raw.toString());
+        lastClientActivityAt = Date.now();
+
+        if (msg.type === 'ws.pong') {
+          return;
+        }
 
         // Handle PTY messages (not part of ClientWsEvent type)
         if (msg.type === 'pty.start') {
@@ -34,22 +56,11 @@ export async function registerWebSocket(app: FastifyInstance) {
               return;
             }
 
-            let command: string;
-            let args: string[];
-
-            if (ctx.agent === 'claude') {
-              command = 'claude';
-              args = [];
-              if (config.claudeModel) args.push('--model', config.claudeModel);
-              if (ctx.vendorSessionId) args.push('-r', ctx.vendorSessionId);
-            } else {
-              command = 'codex';
-              args = ['-C', ctx.cwd];
-              if (config.codexModel) args.push('-m', config.codexModel);
-              if (ctx.vendorSessionId) {
-                args.push('resume', ctx.vendorSessionId);
-              }
-            }
+            const { command, args } = buildInteractiveCommand({
+              agent: ctx.agent,
+              cwd: ctx.cwd,
+              vendorSessionId: ctx.vendorSessionId,
+            });
 
             ptyManager.start({
               sessionId,
@@ -85,11 +96,49 @@ export async function registerWebSocket(app: FastifyInstance) {
             }
 
             if (!await ptyManager.attach(msg.sessionId, ws)) {
+              const interactiveState = await interactiveTerminalStateService.get(msg.sessionId);
+              const canResume = ptyManager.hasPersistentSession(msg.sessionId)
+                || Boolean(interactiveState?.active && ctx.vendorSessionId);
+
+              if (canResume) {
+                const { command, args } = buildInteractiveCommand({
+                  agent: ctx.agent,
+                  cwd: ctx.cwd,
+                  vendorSessionId: ctx.vendorSessionId,
+                });
+
+                ptyManager.start({
+                  sessionId: msg.sessionId,
+                  roomId: ctx.roomId,
+                  agent: ctx.agent,
+                  command,
+                  args,
+                  cwd: ctx.cwd,
+                  vendorSessionId: ctx.vendorSessionId,
+                  ws,
+                  initialSnapshot: interactiveState?.snapshot,
+                });
+                return;
+              }
+
+              if (interactiveState?.snapshot) {
+                ws.send(JSON.stringify({
+                  type: 'pty.restore',
+                  sessionId: msg.sessionId,
+                  screen: interactiveState.snapshot.screen,
+                  cols: interactiveState.snapshot.cols,
+                  rows: interactiveState.snapshot.rows,
+                  viewportY: interactiveState.snapshot.viewportY,
+                }));
+              }
+
               ws.send(JSON.stringify({
                 type: 'pty.exit',
                 sessionId: msg.sessionId,
                 exitCode: 1,
-                error: 'PTY session is not running',
+                error: interactiveState?.active
+                  ? 'Session could not be resumed automatically. Restart it to continue.'
+                  : 'PTY session is not running',
               }));
             }
           } catch (err) {
@@ -163,11 +212,6 @@ export async function registerWebSocket(app: FastifyInstance) {
             await approvalService.decide(event.approvalId, event.decision);
             break;
           }
-
-          case 'run.interrupt': {
-            app.log.info({ runId: event.runId }, 'Run interrupt via WS');
-            break;
-          }
         }
       } catch (err) {
         app.log.error({ err }, 'Invalid WS message');
@@ -175,6 +219,7 @@ export async function registerWebSocket(app: FastifyInstance) {
     });
 
     ws.on('close', () => {
+      clearInterval(heartbeatTimer);
       roomChannel.unsubscribeAll(ws);
       ptyManager.detachBySocket(ws);
     });

@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "build": "pnpm -r build",
-    "lint": "pnpm -r lint",
+    "lint": "pnpm -r --if-present lint",
     "db:migrate": "pnpm --filter @control-room/server prisma:migrate",
     "db:generate": "pnpm --filter @control-room/server prisma:generate"
   },

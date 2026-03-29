@@ -10,10 +10,10 @@ import { messageRoutes } from './routes/messages.js';
 import { runRoutes } from './routes/runs.js';
 import { approvalRoutes } from './routes/approvals.js';
 import { pinRoutes } from './routes/pins.js';
-import { handoffRoutes } from './routes/handoffs.js';
 import { reviewRoutes } from './routes/reviews.js';
 import { excerptRoutes } from './routes/excerpts.js';
 import { registerWebSocket } from './ws/handler.js';
+import { ptyManager } from './ws/pty-manager.js';
 import { orchestrator } from './orchestrator/room-orchestrator.js';
 import { ClaudeCLIAdapter } from './adapters/cli/claude-cli-adapter.js';
 import { CodexCLIAdapter } from './adapters/cli/codex-cli-adapter.js';
@@ -42,7 +42,6 @@ async function main() {
   await app.register(runRoutes);
   await app.register(approvalRoutes);
   await app.register(pinRoutes);
-  await app.register(handoffRoutes);
   await app.register(reviewRoutes);
   await app.register(excerptRoutes);
 
@@ -69,6 +68,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     app.log.info('Shutting down...');
+    await ptyManager.prepareForShutdown();
     await app.close();
     await prisma.$disconnect();
     process.exit(0);

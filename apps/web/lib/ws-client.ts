@@ -14,6 +14,10 @@ export class WsClient {
   private reconnectDelay = 1000;
   private maxReconnectDelay = 30000;
   private pendingEvents: ClientWsEvent[] = [];
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatCheckIntervalMs = 5000;
+  private heartbeatTimeoutMs = 45000;
+  private lastServerActivityAt = 0;
 
   subscribe(roomId: string): void {
     this.roomId = roomId;
@@ -52,9 +56,12 @@ export class WsClient {
     if (this.ws) this.disconnect();
 
     this.ws = new WebSocket(WS_URL);
+    this.lastServerActivityAt = Date.now();
 
     this.ws.onopen = () => {
       this.reconnectDelay = 1000;
+      this.lastServerActivityAt = Date.now();
+      this.startHeartbeatMonitor();
       if (this.roomId) {
         this.ws?.send(JSON.stringify({ type: 'room.subscribe', roomId: this.roomId }));
       }
@@ -70,8 +77,13 @@ export class WsClient {
     };
 
     this.ws.onmessage = (e) => {
+      this.lastServerActivityAt = Date.now();
       try {
         const event: ServerWsEvent = JSON.parse(e.data);
+        if (event.type === 'ws.ping') {
+          this.send({ type: 'ws.pong' });
+          return;
+        }
         for (const handler of this.handlers) {
           handler(event);
         }
@@ -81,6 +93,7 @@ export class WsClient {
     };
 
     this.ws.onclose = () => {
+      this.stopHeartbeatMonitor();
       this.ws = null;
       if (this.roomId) this.scheduleReconnect();
     };
@@ -95,6 +108,7 @@ export class WsClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    this.stopHeartbeatMonitor();
     this.ws?.close();
     this.ws = null;
   }
@@ -104,6 +118,28 @@ export class WsClient {
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
       this.connect();
     }, this.reconnectDelay);
+  }
+
+  private startHeartbeatMonitor(): void {
+    this.stopHeartbeatMonitor();
+    this.heartbeatTimer = setInterval(() => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      if (Date.now() - this.lastServerActivityAt <= this.heartbeatTimeoutMs) {
+        return;
+      }
+
+      this.ws.close();
+    }, this.heartbeatCheckIntervalMs);
+  }
+
+  private stopHeartbeatMonitor(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
   }
 }
 

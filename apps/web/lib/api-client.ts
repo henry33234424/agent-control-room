@@ -9,11 +9,9 @@ import type {
   CreateSessionRequest,
   UpdateSessionRequest,
   SendMessageRequest,
-  CreateHandoffRequest,
   CreatePinRequest,
   UpdatePinRequest,
   PinnedBriefItem,
-  HandoffBundle,
   PaginatedResponse,
   DecideApprovalRequest,
   CreateReviewRequest,
@@ -114,13 +112,6 @@ export const api = {
   approvals: {
     decide: (approvalId: string, data: DecideApprovalRequest) =>
       request<{ ok: boolean }>(`/api/approvals/${approvalId}/decide`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
-  },
-  handoffs: {
-    create: (roomId: string, data: CreateHandoffRequest) =>
-      request<HandoffBundle>(`/api/rooms/${roomId}/handoffs`, {
         method: 'POST',
         body: JSON.stringify(data),
       }),

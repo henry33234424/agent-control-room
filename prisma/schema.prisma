@@ -41,10 +41,23 @@ model AgentSession {
 
   room         Room          @relation(fields: [roomId], references: [id])
   worktree     Worktree?     @relation(fields: [worktreeId], references: [id])
+  interactiveTerminalState InteractiveTerminalState?
   runs         Run[]
   chatMessages ChatMessage[]
 
   @@map("agent_sessions")
+}
+
+model InteractiveTerminalState {
+  sessionId     String   @id @map("session_id")
+  active        Boolean  @default(false)
+  snapshotJson  String?  @map("snapshot_json")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  session AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("interactive_terminal_states")
 }
 
 model Run {

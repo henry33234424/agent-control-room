@@ -138,10 +138,6 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       case 'pin.updated':
         set({ pinnedBrief: event.data.items });
         break;
-      case 'handoff.created':
-        // Handoff-summary message is already broadcast via message.created
-        // Store the bundle for potential UI display
-        break;
     }
   },
 }));

@@ -3,7 +3,6 @@ import type { RuntimeEvent } from './runtime-event.js';
 import type { Approval } from './approval.js';
 import type { AgentSession, RoomSnapshot } from './room.js';
 import type { PinnedBriefItem } from './pinned-brief.js';
-import type { HandoffBundle } from './handoff.js';
 import type { AgentKind, RunStatus, SessionStatus } from './agent.js';
 
 // ── Client → Server ──
@@ -18,15 +17,14 @@ export interface WsUnsubscribe {
   roomId: string;
 }
 
-export interface WsRunInterrupt {
-  type: 'run.interrupt';
-  runId: string;
-}
-
 export interface WsApprovalDecide {
   type: 'approval.decide';
   approvalId: string;
   decision: 'approved' | 'denied';
+}
+
+export interface WsPong {
+  type: 'ws.pong';
 }
 
 export interface WsPtyStart {
@@ -64,8 +62,8 @@ export interface WsPtyKill {
 export type ClientWsEvent =
   | WsSubscribe
   | WsUnsubscribe
-  | WsRunInterrupt
   | WsApprovalDecide
+  | WsPong
   | WsPtyStart
   | WsPtyAttach
   | WsPtyInput
@@ -77,6 +75,10 @@ export type ClientWsEvent =
 export interface WsRoomSnapshot {
   type: 'room.snapshot';
   data: RoomSnapshot;
+}
+
+export interface WsPing {
+  type: 'ws.ping';
 }
 
 export interface WsMessageCreated {
@@ -129,11 +131,6 @@ export interface WsPinUpdated {
   data: { roomId: string; items: PinnedBriefItem[] };
 }
 
-export interface WsHandoffCreated {
-  type: 'handoff.created';
-  data: HandoffBundle;
-}
-
 export interface WsPtyStarted {
   type: 'pty.started';
   sessionId: string;
@@ -163,6 +160,7 @@ export interface WsPtyExit {
 }
 
 export type ServerWsEvent =
+  | WsPing
   | WsRoomSnapshot
   | WsMessageCreated
   | WsMessageUpdated
@@ -174,7 +172,6 @@ export type ServerWsEvent =
   | WsApprovalRequested
   | WsApprovalResolved
   | WsPinUpdated
-  | WsHandoffCreated
   | WsPtyStarted
   | WsPtyRestore
   | WsPtyOutput

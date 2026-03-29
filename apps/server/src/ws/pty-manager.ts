@@ -2,9 +2,11 @@ import { createRequire } from 'node:module';
 import type { WebSocket } from '@fastify/websocket';
 import type { AgentKind, WsPtyRestore } from '@control-room/shared-types';
 import type { IPty } from 'node-pty';
+import { interactiveTerminalStateService } from '../services/interactive-terminal-state-service.js';
 import { sessionService } from '../services/session-service.js';
 import { SessionWatcher } from './session-watcher.js';
-import { HeadlessTerminalState } from './headless-terminal-state.js';
+import { HeadlessTerminalState, type TerminalRestoreSnapshot } from './headless-terminal-state.js';
+import { tmuxSessionManager } from './tmux-session-manager.js';
 const require_ = createRequire(import.meta.url);
 const pty: { spawn: typeof import('node-pty').spawn } = require_('node-pty');
 
@@ -16,11 +18,12 @@ interface PtySession {
   roomId: string;
   buffer: string;
   screen: HeadlessTerminalState;
-  detachTimer: NodeJS.Timeout | null;
   restoreSequence: number;
   restoreBacklog: string;
   restoring: boolean;
   watcher: SessionWatcher;
+  snapshotTimer: ReturnType<typeof setTimeout> | null;
+  backend: 'direct' | 'tmux';
 }
 
 /**
@@ -31,7 +34,8 @@ interface PtySession {
 class PtyManager {
   private sessions = new Map<string, PtySession>();
   private maxBufferChars = 200_000;
-  private detachTtlMs = 10 * 60 * 1000;
+  private snapshotPersistDelayMs = 1000;
+  private shuttingDown = false;
 
   start(input: {
     sessionId: string;
@@ -44,6 +48,7 @@ class PtyManager {
     ws?: WebSocket | null;
     cols?: number;
     rows?: number;
+    initialSnapshot?: TerminalRestoreSnapshot;
   }): void {
     if (input.ws) {
       this.detachBySocket(input.ws);
@@ -52,10 +57,6 @@ class PtyManager {
     // Reattach to existing session
     const existing = this.sessions.get(input.sessionId);
     if (existing) {
-      if (existing.detachTimer) {
-        clearTimeout(existing.detachTimer);
-        existing.detachTimer = null;
-      }
       if (input.ws) {
         existing.ws = input.ws;
         void this.restoreSocket(existing, input.ws);
@@ -63,10 +64,21 @@ class PtyManager {
       return;
     }
 
-    const cols = input.cols ?? 120;
-    const rows = input.rows ?? 40;
-
-    const ptyProcess = pty.spawn(input.command, input.args, {
+    const cols = input.initialSnapshot?.cols ?? input.cols ?? 120;
+    const rows = input.initialSnapshot?.rows ?? input.rows ?? 40;
+    const tmuxState = tmuxSessionManager.ensureSession({
+      sessionId: input.sessionId,
+      cwd: input.cwd,
+      command: input.command,
+      args: input.args,
+      cols,
+      rows,
+    });
+    const usingTmux = tmuxState !== 'unavailable';
+    const processCommand = usingTmux
+      ? tmuxSessionManager.attachCommand(input.sessionId)
+      : { command: input.command, args: input.args };
+    const ptyProcess = pty.spawn(processCommand.command, processCommand.args, {
       name: 'xterm-256color',
       cols,
       rows,
@@ -82,7 +94,6 @@ class PtyManager {
       roomId: input.roomId,
       buffer: '',
       screen: new HeadlessTerminalState(cols, rows),
-      detachTimer: null,
       restoreSequence: 0,
       restoreBacklog: '',
       restoring: false,
@@ -96,15 +107,35 @@ class PtyManager {
           });
         },
       }),
+      snapshotTimer: null,
+      backend: usingTmux ? 'tmux' : 'direct',
     };
+
+    const shouldSeedSnapshot = !usingTmux && Boolean(input.initialSnapshot?.screen);
+
+    if (shouldSeedSnapshot && input.initialSnapshot?.screen) {
+      void session.screen.write(input.initialSnapshot.screen);
+      if (input.initialSnapshot.cols !== cols || input.initialSnapshot.rows !== rows) {
+        void session.screen.resize(cols, rows);
+      }
+    }
 
     this.sessions.set(input.sessionId, session);
     session.watcher.start(input.cwd, input.vendorSessionId);
+    void interactiveTerminalStateService.update(input.sessionId, {
+      active: true,
+      snapshot: input.initialSnapshot,
+    }).catch((err) => {
+      console.error('[pty-manager] Failed to persist interactive session state:', err);
+    });
     if (session.ws?.readyState === 1) {
+      if (shouldSeedSnapshot && input.initialSnapshot) {
+        session.ws.send(JSON.stringify(this.toRestoreEvent(input.sessionId, input.initialSnapshot)));
+      }
       session.ws.send(JSON.stringify({
         type: 'pty.started',
         sessionId: input.sessionId,
-        restored: false,
+        restored: Boolean(shouldSeedSnapshot),
       }));
     }
 
@@ -112,6 +143,7 @@ class PtyManager {
     ptyProcess.onData((data: string) => {
       session.buffer = this.appendBuffer(session.buffer, data);
       void session.screen.write(data);
+      this.scheduleSnapshotPersist(session);
       if (session.ws?.readyState === 1) {
         if (session.restoring) {
           session.restoreBacklog = this.appendBuffer(session.restoreBacklog, data);
@@ -122,6 +154,17 @@ class PtyManager {
     });
 
     ptyProcess.onExit(({ exitCode }) => {
+      if (session.snapshotTimer) {
+        clearTimeout(session.snapshotTimer);
+        session.snapshotTimer = null;
+      }
+      const persistentSessionStillExists = session.backend === 'tmux' && tmuxSessionManager.hasSession(input.sessionId);
+
+      if (this.shuttingDown && persistentSessionStillExists) {
+        this.sessions.delete(input.sessionId);
+        return;
+      }
+
       if (session.ws?.readyState === 1) {
         session.ws.send(JSON.stringify({
           type: 'pty.exit',
@@ -129,23 +172,20 @@ class PtyManager {
           exitCode,
         }));
       }
-      if (session.detachTimer) {
-        clearTimeout(session.detachTimer);
-      }
-      session.screen.dispose();
       session.watcher.stop();
       this.sessions.delete(input.sessionId);
+      void this.persistSnapshot(session, {
+        active: persistentSessionStillExists,
+        immediate: true,
+      }).finally(() => {
+        session.screen.dispose();
+      });
     });
   }
 
   async attach(sessionId: string, ws: WebSocket): Promise<boolean> {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
-
-    if (session.detachTimer) {
-      clearTimeout(session.detachTimer);
-      session.detachTimer = null;
-    }
 
     // Detach this WS from any other session first
     this.detachBySocket(ws);
@@ -207,6 +247,10 @@ class PtyManager {
     if (session) {
       void session.screen.resize(cols, rows);
       session.ptyProcess.resize(cols, rows);
+      if (session.backend === 'tmux') {
+        tmuxSessionManager.resizeSession(sessionId, cols, rows);
+      }
+      this.scheduleSnapshotPersist(session);
     }
   }
 
@@ -215,19 +259,49 @@ class PtyManager {
     if (session && session.ws === ws) {
       void session.screen.resize(cols, rows);
       session.ptyProcess.resize(cols, rows);
+      if (session.backend === 'tmux') {
+        tmuxSessionManager.resizeSession(sessionId, cols, rows);
+      }
+      this.scheduleSnapshotPersist(session);
     }
   }
 
   kill(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session) {
-      if (session.detachTimer) {
-        clearTimeout(session.detachTimer);
+      if (session.snapshotTimer) {
+        clearTimeout(session.snapshotTimer);
+        session.snapshotTimer = null;
       }
-      session.watcher.stop();
+      void interactiveTerminalStateService.update(sessionId, { active: false }).catch((err) => {
+        console.error('[pty-manager] Failed to mark interactive session inactive:', err);
+      });
+      if (session.backend === 'tmux') {
+        tmuxSessionManager.killSession(sessionId);
+      }
       session.ptyProcess.kill();
-      this.sessions.delete(sessionId);
+      return;
     }
+
+    tmuxSessionManager.killSession(sessionId);
+    void interactiveTerminalStateService.update(sessionId, { active: false }).catch((err) => {
+      console.error('[pty-manager] Failed to mark interactive session inactive:', err);
+    });
+  }
+
+  hasPersistentSession(sessionId: string): boolean {
+    return tmuxSessionManager.hasSession(sessionId);
+  }
+
+  async prepareForShutdown(): Promise<void> {
+    this.shuttingDown = true;
+    await Promise.all(
+      Array.from(this.sessions.values()).map((session) => this.persistSnapshot(session, { active: true, immediate: true })),
+    );
+  }
+
+  isTmuxEnabled(): boolean {
+    return tmuxSessionManager.isAvailable();
   }
 
   killForSocket(ws: WebSocket, sessionId: string): void {
@@ -247,7 +321,7 @@ class PtyManager {
     for (const session of this.sessions.values()) {
       if (session.ws === ws) {
         session.ws = null;
-        this.scheduleDetachCleanup(session);
+        void this.persistSnapshot(session, { active: true, immediate: true });
       }
     }
   }
@@ -281,6 +355,34 @@ class PtyManager {
     return next.slice(next.length - this.maxBufferChars);
   }
 
+  private scheduleSnapshotPersist(session: PtySession): void {
+    if (session.snapshotTimer) {
+      return;
+    }
+
+    session.snapshotTimer = setTimeout(() => {
+      session.snapshotTimer = null;
+      void this.persistSnapshot(session, { active: true });
+    }, this.snapshotPersistDelayMs);
+  }
+
+  private async persistSnapshot(
+    session: PtySession,
+    input: { active: boolean; immediate?: boolean },
+  ): Promise<void> {
+    try {
+      const snapshot = await session.screen.snapshot();
+      await interactiveTerminalStateService.update(session.sessionId, {
+        active: input.active,
+        snapshot,
+      });
+    } catch (err) {
+      if (input.immediate) {
+        console.error('[pty-manager] Failed to persist terminal snapshot:', err);
+      }
+    }
+  }
+
   private async restoreSocket(session: PtySession, ws: WebSocket): Promise<void> {
     const restoreSequence = session.restoreSequence + 1;
     session.restoreSequence = restoreSequence;
@@ -312,6 +414,8 @@ class PtyManager {
       session.restoring = false;
       session.restoreBacklog = '';
     }
+
+    this.scheduleSnapshotPersist(session);
   }
 
   private toRestoreEvent(
@@ -326,21 +430,6 @@ class PtyManager {
       rows: snapshot.rows,
       viewportY: snapshot.viewportY,
     };
-  }
-
-  private scheduleDetachCleanup(session: PtySession): void {
-    if (session.detachTimer) {
-      clearTimeout(session.detachTimer);
-    }
-    session.detachTimer = setTimeout(() => {
-      const current = this.sessions.get(session.sessionId);
-      if (!current || current.ws) {
-        return;
-      }
-      current.watcher.stop();
-      current.ptyProcess.kill();
-      this.sessions.delete(session.sessionId);
-    }, this.detachTtlMs);
   }
 }
 

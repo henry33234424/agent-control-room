@@ -41,14 +41,6 @@ export interface ListMessagesQuery {
   cursor?: string;
 }
 
-// ── Handoff ──
-
-export interface CreateHandoffRequest {
-  targetAgent: AgentKind;
-  selectedMessageIds: string[];
-  userInstruction: string;
-}
-
 // ── Pinned Brief ──
 
 export interface CreatePinRequest {

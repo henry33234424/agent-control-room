@@ -2,8 +2,8 @@ import type { AgentKind, MentionTarget } from '@control-room/shared-types';
 import { prisma } from '../db.js';
 import { parseMention, getTargetAgents } from '../orchestrator/message-router.js';
 import { sessionService } from './session-service.js';
+import { buildInteractiveCommand } from './interactive-command.js';
 import { ptyManager } from '../ws/pty-manager.js';
-import { config } from '../config.js';
 
 interface PreparedDispatchTarget {
   agent: AgentKind;
@@ -103,22 +103,11 @@ export class InteractiveDispatchService {
       return;
     }
 
-    let command: string;
-    let args: string[];
-
-    if (input.agent === 'claude') {
-      command = 'claude';
-      args = [];
-      if (config.claudeModel) args.push('--model', config.claudeModel);
-      if (input.vendorSessionId) args.push('-r', input.vendorSessionId);
-    } else {
-      command = 'codex';
-      args = ['-C', input.cwd];
-      if (config.codexModel) args.push('-m', config.codexModel);
-      if (input.vendorSessionId) {
-        args.push('resume', input.vendorSessionId);
-      }
-    }
+    const { command, args } = buildInteractiveCommand({
+      agent: input.agent,
+      cwd: input.cwd,
+      vendorSessionId: input.vendorSessionId,
+    });
 
     ptyManager.start({
       sessionId: input.sessionId,

@@ -1,7 +1,6 @@
 export * from './agent.js';
 export * from './runtime-event.js';
 export * from './chat-message.js';
-export * from './handoff.js';
 export * from './pinned-brief.js';
 export * from './approval.js';
 export * from './room.js';
