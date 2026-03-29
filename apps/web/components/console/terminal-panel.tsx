@@ -106,6 +106,14 @@ export function TerminalPanel() {
       wsClient.send({ type: 'pty.input', sessionId, data });
     });
 
+    // Force mouse wheel to always scroll the terminal locally,
+    // even when the TUI program has enabled mouse capture mode.
+    container.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const lines = Math.round(e.deltaY / 30) || (e.deltaY > 0 ? 1 : -1);
+      term.scrollLines(lines);
+    }, { passive: false });
+
     term.onSelectionChange(() => {
       const sel = term.getSelection();
       setSelectedText(sel && sel.trim() ? sel.trim() : null);
