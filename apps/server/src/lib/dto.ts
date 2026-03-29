@@ -2,17 +2,11 @@ import type {
   ChatMessage,
   AgentSession,
   Room,
-  RuntimeEvent,
   PinnedBriefItem,
   AgentKind,
   ChatMessageRole,
   MentionTarget,
-  SessionMode,
   SessionStatus,
-  RuntimeEventKind,
-  EventLevel,
-  Approval,
-  ApprovalType,
 } from '@control-room/shared-types';
 
 // Prisma returns null for optional fields; our DTOs use undefined.
@@ -22,7 +16,6 @@ type PrismaRoom = {
   id: string;
   name: string;
   repoPath: string;
-  defaultBranch: string;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -32,7 +25,6 @@ export function toRoomDto(r: PrismaRoom): Room {
     id: r.id,
     name: r.name,
     repoPath: r.repoPath,
-    defaultBranch: r.defaultBranch,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
@@ -44,9 +36,7 @@ type PrismaSession = {
   agent: string;
   vendorSessionId: string | null;
   name: string;
-  mode: string;
   status: string;
-  worktreeId: string | null;
   metadataJson: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -59,9 +49,7 @@ export function toSessionDto(s: PrismaSession): AgentSession {
     agent: s.agent as AgentKind,
     vendorSessionId: s.vendorSessionId ?? undefined,
     name: s.name,
-    mode: s.mode as SessionMode,
     status: s.status as SessionStatus,
-    worktreeId: s.worktreeId ?? undefined,
     metadata: s.metadataJson ? JSON.parse(s.metadataJson) : undefined,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
@@ -101,38 +89,6 @@ export function toMessageDto(m: PrismaMessage): ChatMessage {
   };
 }
 
-type PrismaEvent = {
-  id: string;
-  roomId: string;
-  agent: string;
-  sessionId: string;
-  runId: string;
-  worktreeId: string | null;
-  kind: string;
-  title: string | null;
-  text: string | null;
-  payloadJson: string | null;
-  level: string;
-  ts: Date;
-};
-
-export function toEventDto(e: PrismaEvent): RuntimeEvent {
-  return {
-    id: e.id,
-    roomId: e.roomId,
-    agent: e.agent as AgentKind,
-    sessionId: e.sessionId,
-    runId: e.runId,
-    worktreeId: e.worktreeId ?? undefined,
-    kind: e.kind as RuntimeEventKind,
-    title: e.title ?? undefined,
-    text: e.text ?? undefined,
-    payload: e.payloadJson ? JSON.parse(e.payloadJson) : undefined,
-    level: e.level as EventLevel,
-    ts: e.ts.toISOString(),
-  };
-}
-
 type PrismaPin = {
   id: string;
   roomId: string;
@@ -154,37 +110,5 @@ export function toPinDto(p: PrismaPin): PinnedBriefItem {
     version: p.version,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
-  };
-}
-
-type PrismaApproval = {
-  id: string;
-  roomId: string;
-  runId: string;
-  agent: string;
-  approvalType: string;
-  title: string;
-  payloadJson: string | null;
-  status: string;
-  createdAt: Date;
-  resolvedAt: Date | null;
-  run?: {
-    agentSessionId: string;
-  } | null;
-};
-
-export function toApprovalDto(a: PrismaApproval): Approval {
-  return {
-    id: a.id,
-    roomId: a.roomId,
-    runId: a.runId,
-    sessionId: a.run?.agentSessionId ?? '',
-    agent: a.agent as AgentKind,
-    approvalType: a.approvalType as ApprovalType,
-    title: a.title,
-    payload: a.payloadJson ? JSON.parse(a.payloadJson) : undefined,
-    status: a.status as Approval['status'],
-    createdAt: a.createdAt.toISOString(),
-    resolvedAt: a.resolvedAt?.toISOString() ?? undefined,
   };
 }

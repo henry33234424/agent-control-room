@@ -8,7 +8,7 @@ let roomId: string;
 beforeAll(async () => {
   prisma = createTestPrisma();
   const room = await prisma.room.create({
-    data: { name: 'test-room', repoPath: '/tmp/test-repo', defaultBranch: 'main' },
+    data: { name: 'test-room', repoPath: '/tmp/test-repo' },
   });
   roomId = room.id;
 });

@@ -1,4 +1,4 @@
-import type { AgentKind, SessionMode, TriggerType } from './agent.js';
+import type { AgentKind } from './agent.js';
 import type { MentionTarget } from './chat-message.js';
 import type { PinnedBriefSection } from './pinned-brief.js';
 
@@ -7,8 +7,6 @@ import type { PinnedBriefSection } from './pinned-brief.js';
 export interface CreateRoomRequest {
   name: string;
   repoPath: string;
-  defaultBranch?: string;
-  initializeGitIfMissing?: boolean;
 }
 
 export interface UpdateRoomRequest {
@@ -20,7 +18,6 @@ export interface UpdateRoomRequest {
 export interface CreateSessionRequest {
   agent: AgentKind;
   name: string;
-  mode?: SessionMode;
 }
 
 export interface UpdateSessionRequest {
@@ -52,22 +49,6 @@ export interface CreatePinRequest {
 export interface UpdatePinRequest {
   content?: string;
   sortOrder?: number;
-}
-
-// ── Approval ──
-
-export interface DecideApprovalRequest {
-  decision: 'approved' | 'denied';
-}
-
-// ── Review ──
-
-export interface CreateReviewRequest {
-  agent: AgentKind;
-  sessionId: string;
-  target: 'uncommittedChanges' | 'baseBranch' | 'commit' | 'custom';
-  customRef?: string;
-  parentRunId?: string;
 }
 
 // ── Paginated response ──

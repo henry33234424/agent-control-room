@@ -4,8 +4,6 @@ export type ChatMessageRole =
   | 'user'
   | 'agent'
   | 'system'
-  | 'review'
-  | 'approval'
   | 'handoff-summary'
   | 'excerpt';
 

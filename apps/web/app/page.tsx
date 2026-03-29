@@ -7,12 +7,10 @@ import { ChatPanel } from '@/components/chat/chat-panel';
 import { ResizablePanels } from '@/components/layout/resizable-panels';
 import { useRoomStore } from '@/stores/room-store';
 import { useUIStore } from '@/stores/ui-store';
-import { useConsoleStore } from '@/stores/console-store';
 
 export default function HomePage() {
   const setSnapshot = useRoomStore((s) => s.setSnapshot);
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
-  const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
 
   useEffect(() => {
     setSnapshot({
@@ -20,11 +18,9 @@ export default function HomePage() {
       sessions: [],
       recentMessages: [],
       pinnedBrief: [],
-      pendingApprovals: [],
     });
     setSelectedSessionId(null);
-    setConsoleSession(null);
-  }, [setSnapshot, setSelectedSessionId, setConsoleSession]);
+  }, [setSnapshot, setSelectedSessionId]);
 
   return (
     <ResizablePanels

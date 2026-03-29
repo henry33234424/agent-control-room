@@ -9,8 +9,6 @@ const ROLE_STYLES: Record<string, string> = {
   user: 'bg-blue-900/30 border-blue-800',
   agent: 'bg-gray-800/50 border-gray-700',
   system: 'bg-gray-900/50 border-gray-800 text-gray-500 italic',
-  review: 'bg-purple-900/30 border-purple-800',
-  approval: 'bg-yellow-900/30 border-yellow-800',
   'handoff-summary': 'bg-green-900/30 border-green-800',
   excerpt: 'bg-amber-900/30 border-amber-800',
 };

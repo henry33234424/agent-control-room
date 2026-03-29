@@ -3,7 +3,6 @@ import type {
   RoomSnapshot,
   AgentSession,
   ChatMessage,
-  RuntimeEvent,
   CreateRoomRequest,
   UpdateRoomRequest,
   CreateSessionRequest,
@@ -13,8 +12,6 @@ import type {
   UpdatePinRequest,
   PinnedBriefItem,
   PaginatedResponse,
-  DecideApprovalRequest,
-  CreateReviewRequest,
 } from '@control-room/shared-types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3002';
@@ -37,18 +34,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return undefined as T;
   }
   return res.json();
-}
-
-interface RunSummary {
-  id: string;
-  roomId: string;
-  agentSessionId: string;
-  triggerType: string;
-  status: string;
-  resultSummary?: string;
-  startedAt?: string;
-  endedAt?: string;
-  createdAt: string;
 }
 
 export const api = {
@@ -99,23 +84,6 @@ export const api = {
         body: JSON.stringify(data),
       }),
   },
-  runs: {
-    list: (roomId: string, sessionId?: string) =>
-      request<RunSummary[]>(
-        `/api/rooms/${roomId}/runs${sessionId ? `?sessionId=${sessionId}` : ''}`,
-      ),
-    events: (roomId: string, runId: string, limit = 200) =>
-      request<PaginatedResponse<RuntimeEvent>>(
-        `/api/rooms/${roomId}/runs/${runId}/events?limit=${limit}`,
-      ),
-  },
-  approvals: {
-    decide: (approvalId: string, data: DecideApprovalRequest) =>
-      request<{ ok: boolean }>(`/api/approvals/${approvalId}/decide`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
-  },
   pins: {
     list: (roomId: string) => request<PinnedBriefItem[]>(`/api/rooms/${roomId}/pins`),
     create: (roomId: string, data: CreatePinRequest) =>
@@ -130,12 +98,5 @@ export const api = {
       }),
     delete: (roomId: string, pinId: string) =>
       request<void>(`/api/rooms/${roomId}/pins/${pinId}`, { method: 'DELETE' }),
-  },
-  reviews: {
-    create: (roomId: string, data: CreateReviewRequest) =>
-      request<{ runId: string; status: string }>(`/api/rooms/${roomId}/reviews`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
   },
 };

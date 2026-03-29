@@ -3,7 +3,6 @@ import type { ClientWsEvent } from '@control-room/shared-types';
 import { roomChannel } from './room-channel.js';
 import { prisma } from '../db.js';
 import { toRoomDto, toSessionDto, toMessageDto, toPinDto } from '../lib/dto.js';
-import { approvalService } from '../services/approval-service.js';
 import { buildInteractiveCommand } from '../services/interactive-command.js';
 import { interactiveTerminalStateService } from '../services/interactive-terminal-state-service.js';
 import { sessionService } from '../services/session-service.js';
@@ -183,7 +182,6 @@ export async function registerWebSocket(app: FastifyInstance) {
               },
             });
             if (room) {
-              const pendingApprovals = await approvalService.listPendingByRoom(event.roomId);
               ws.send(
                 JSON.stringify({
                   type: 'room.snapshot',
@@ -192,7 +190,6 @@ export async function registerWebSocket(app: FastifyInstance) {
                     sessions: room.sessions.map(toSessionDto),
                     recentMessages: room.chatMessages.reverse().map(toMessageDto),
                     pinnedBrief: room.pinnedBriefItems.map(toPinDto),
-                    pendingApprovals,
                   },
                 }),
               );
@@ -205,11 +202,6 @@ export async function registerWebSocket(app: FastifyInstance) {
               roomChannel.unsubscribe(subscribedRoomId, ws);
               subscribedRoomId = null;
             }
-            break;
-          }
-
-          case 'approval.decide': {
-            await approvalService.decide(event.approvalId, event.decision);
             break;
           }
         }

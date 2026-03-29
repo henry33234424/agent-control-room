@@ -4,7 +4,6 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import { api } from '@/lib/api-client';
 import { useUIStore } from '@/stores/ui-store';
 import { useRoomStore } from '@/stores/room-store';
-import { useConsoleStore } from '@/stores/console-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import type { AgentSession, MentionTarget } from '@control-room/shared-types';
 
@@ -198,7 +197,6 @@ export function MessageInput({ roomId }: { roomId: string }) {
   const selectedSessionId = useUIStore((s) => s.selectedSessionId);
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
   const sessions = useRoomStore((s) => s.sessions);
-  const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
   const selectedMessageIds = useSelectionStore((s) => s.selectedMessageIds);
   const clearSelection = useSelectionStore((s) => s.clear);
   const [content, setContent] = useState('');
@@ -251,7 +249,6 @@ export function MessageInput({ roomId }: { roomId: string }) {
       });
       if (msg.sessionId) {
         setSelectedSessionId(msg.sessionId);
-        setConsoleSession(msg.sessionId);
       }
       clearSelection();
       setContent('');

@@ -1,9 +1,7 @@
 import type { ChatMessage } from './chat-message.js';
-import type { RuntimeEvent } from './runtime-event.js';
-import type { Approval } from './approval.js';
 import type { AgentSession, RoomSnapshot } from './room.js';
 import type { PinnedBriefItem } from './pinned-brief.js';
-import type { AgentKind, RunStatus, SessionStatus } from './agent.js';
+import type { AgentKind, SessionStatus } from './agent.js';
 
 // ── Client → Server ──
 
@@ -15,12 +13,6 @@ export interface WsSubscribe {
 export interface WsUnsubscribe {
   type: 'room.unsubscribe';
   roomId: string;
-}
-
-export interface WsApprovalDecide {
-  type: 'approval.decide';
-  approvalId: string;
-  decision: 'approved' | 'denied';
 }
 
 export interface WsPong {
@@ -62,7 +54,6 @@ export interface WsPtyKill {
 export type ClientWsEvent =
   | WsSubscribe
   | WsUnsubscribe
-  | WsApprovalDecide
   | WsPong
   | WsPtyStart
   | WsPtyAttach
@@ -91,16 +82,6 @@ export interface WsMessageUpdated {
   data: ChatMessage;
 }
 
-export interface WsRuntimeEvent {
-  type: 'runtime.event';
-  data: RuntimeEvent;
-}
-
-export interface WsRunStatus {
-  type: 'run.status';
-  data: { runId: string; sessionId: string; status: RunStatus };
-}
-
 export interface WsSessionStatus {
   type: 'session.status';
   data: { sessionId: string; status: SessionStatus };
@@ -114,16 +95,6 @@ export interface WsSessionUpdated {
 export interface WsSessionDeleted {
   type: 'session.deleted';
   data: { roomId: string; sessionId: string };
-}
-
-export interface WsApprovalRequested {
-  type: 'approval.requested';
-  data: Approval;
-}
-
-export interface WsApprovalResolved {
-  type: 'approval.resolved';
-  data: Approval;
 }
 
 export interface WsPinUpdated {
@@ -164,13 +135,9 @@ export type ServerWsEvent =
   | WsRoomSnapshot
   | WsMessageCreated
   | WsMessageUpdated
-  | WsRuntimeEvent
-  | WsRunStatus
   | WsSessionStatus
   | WsSessionUpdated
   | WsSessionDeleted
-  | WsApprovalRequested
-  | WsApprovalResolved
   | WsPinUpdated
   | WsPtyStarted
   | WsPtyRestore

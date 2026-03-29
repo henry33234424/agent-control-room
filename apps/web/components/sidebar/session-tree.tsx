@@ -4,14 +4,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useRoomStore } from '@/stores/room-store';
 import { useUIStore } from '@/stores/ui-store';
-import { useConsoleStore } from '@/stores/console-store';
 import { api } from '@/lib/api-client';
 import type { AgentKind, Room } from '@control-room/shared-types';
 
 const STATUS_COLORS: Record<string, string> = {
   idle: 'bg-gray-400',
   running: 'bg-green-500 animate-pulse',
-  waitingApproval: 'bg-yellow-500 animate-pulse',
   failed: 'bg-red-500',
   archived: 'bg-gray-300',
 };
@@ -42,14 +40,12 @@ export function SessionTree() {
   const sessions = useRoomStore((s) => s.sessions);
   const selectedId = useUIStore((s) => s.selectedSessionId);
   const setSelectedId = useUIStore((s) => s.setSelectedSessionId);
-  const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [expandedRooms, setExpandedRooms] = useState<Set<string>>(new Set());
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set(['claude', 'codex']));
   const [addingProject, setAddingProject] = useState(false);
   const [projectName, setProjectName] = useState('');
   const [projectPath, setProjectPath] = useState('');
-  const [initializeGitIfMissing, setInitializeGitIfMissing] = useState(true);
   const [creatingProject, setCreatingProject] = useState(false);
   const [creatingSessionFor, setCreatingSessionFor] = useState<AgentKind | null>(null);
   const [busyRoomId, setBusyRoomId] = useState<string | null>(null);
@@ -79,7 +75,6 @@ export function SessionTree() {
 
   const handleSelect = (id: string) => {
     setSelectedId(id);
-    setConsoleSession(id);
   };
 
   const currentRoomId = room?.id ?? null;
@@ -122,12 +117,10 @@ export function SessionTree() {
       const created = await api.rooms.create({
         name: projectName.trim(),
         repoPath: projectPath.trim(),
-        initializeGitIfMissing,
       });
       setRooms((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
       setProjectName('');
       setProjectPath('');
-      setInitializeGitIfMissing(true);
       setAddingProject(false);
       router.push(`/rooms/${created.id}`);
     } catch (err) {
@@ -149,7 +142,6 @@ export function SessionTree() {
       });
       handleRoomEvent({ type: 'session.updated', data: session });
       setSelectedId(session.id);
-      setConsoleSession(session.id);
       setExpandedAgents((prev) => {
         const next = new Set(prev);
         next.add(agent);
@@ -170,7 +162,7 @@ export function SessionTree() {
       id: project.id,
       title: `Delete project "${project.name}"?`,
       description:
-        'This removes the Control Room record, sessions, messages, runs, and managed worktrees for this project.',
+        'This removes the Control Room record, sessions, messages, and terminal state for this project. It does not delete files from your project folder.',
       confirmLabel: 'Delete Project',
       onConfirm: async () => {
         setBusyRoomId(project.id);
@@ -191,7 +183,6 @@ export function SessionTree() {
               router.push(`/rooms/${fallbackRoom.id}`);
             } else {
               setSelectedId(null);
-              setConsoleSession(null);
               router.push('/');
             }
           }
@@ -236,7 +227,7 @@ export function SessionTree() {
       id: sessionId,
       title: `Delete session "${session.name}"?`,
       description:
-        'This removes its runs, messages, approvals, terminal state, and managed worktree.',
+        'This removes its messages and terminal state. It does not delete files from your project folder.',
       confirmLabel: 'Delete Session',
       onConfirm: async () => {
         setBusySessionId(sessionId);
@@ -248,7 +239,6 @@ export function SessionTree() {
             const remainingSessions = sessions.filter((item) => item.id !== sessionId);
             const fallbackSession = remainingSessions[0] ?? null;
             setSelectedId(fallbackSession?.id ?? null);
-            setConsoleSession(fallbackSession?.id ?? null);
           }
 
           setConfirmDialog(null);
@@ -381,23 +371,9 @@ export function SessionTree() {
               <input
                 value={projectPath}
                 onChange={(e) => setProjectPath(e.target.value)}
-                placeholder="Absolute repo path"
+                placeholder="Absolute project path"
                 className="w-full rounded border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
               />
-              <label className="flex items-start gap-2 text-[11px] text-gray-400">
-                <input
-                  type="checkbox"
-                  checked={initializeGitIfMissing}
-                  onChange={(e) => setInitializeGitIfMissing(e.target.checked)}
-                  className="mt-0.5 h-3.5 w-3.5 rounded border border-gray-600 bg-gray-900 text-blue-500"
-                />
-                <span>
-                  Initialize Git if missing
-                  <span className="block text-[10px] text-gray-500">
-                    Creates a repo and an initial commit from the current folder contents.
-                  </span>
-                </span>
-              </label>
               <button
                 onClick={handleCreateProject}
                 disabled={creatingProject || !projectName.trim() || !projectPath.trim()}
@@ -454,7 +430,6 @@ function AgentGroup({
     name: string;
     status: string;
     updatedAt: string;
-    mode: string;
     metadata?: Record<string, unknown>;
   }>;
   selectedId: string | null;
@@ -517,7 +492,7 @@ function AgentGroup({
                       <span className="flex-shrink-0 text-[10px] uppercase text-gray-500">{s.status}</span>
                     </div>
                     <div className="truncate text-[10px] text-gray-500">
-                      {formatSessionMeta(s.metadata, s.mode)}
+                      {formatSessionMeta(s.metadata)}
                     </div>
                     <div className="text-[10px] text-gray-600">
                       {new Date(s.updatedAt).toLocaleTimeString('en-US', { hour12: false })}
@@ -682,14 +657,8 @@ function ConfirmDialog({
 
 function formatSessionMeta(
   metadata: Record<string, unknown> | undefined,
-  mode: string,
 ): string {
   const branch = typeof metadata?.branch === 'string' ? metadata.branch : undefined;
-  const worktreePath = typeof metadata?.worktreePath === 'string' ? metadata.worktreePath : undefined;
-  const worktreeName = worktreePath ? worktreePath.split('/').filter(Boolean).pop() : undefined;
-
-  if (branch && worktreeName) return `${branch} | ${worktreeName}`;
-  if (branch) return branch;
-  if (worktreeName) return worktreeName;
-  return mode === 'readOnly' ? 'repo root' : 'worktree pending';
+  if (branch) return `${branch} | repo root`;
+  return 'repo root';
 }

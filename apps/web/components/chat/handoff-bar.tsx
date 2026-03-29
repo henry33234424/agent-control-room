@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSelectionStore } from '@/stores/selection-store';
 import { api } from '@/lib/api-client';
 import { useUIStore } from '@/stores/ui-store';
-import { useConsoleStore } from '@/stores/console-store';
 import type { AgentKind, AgentSession } from '@control-room/shared-types';
 import { useRoomStore } from '@/stores/room-store';
 
@@ -58,7 +57,6 @@ export function HandoffBar({ roomId }: { roomId: string }) {
   const sessions = useRoomStore((s) => s.sessions);
   const selectedSessionId = useUIStore((s) => s.selectedSessionId);
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
-  const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
   const [instruction, setInstruction] = useState('');
   const [sending, setSending] = useState<AgentState<boolean>>({
     claude: false,
@@ -103,7 +101,6 @@ export function HandoffBar({ roomId }: { roomId: string }) {
       });
       if (msg.sessionId) {
         setSelectedSessionId(msg.sessionId);
-        setConsoleSession(msg.sessionId);
       }
     } catch (err) {
       console.error(`${agent} handoff failed:`, err);

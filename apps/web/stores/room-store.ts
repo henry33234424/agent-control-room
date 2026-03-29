@@ -4,7 +4,6 @@ import type {
   AgentSession,
   ChatMessage,
   PinnedBriefItem,
-  Approval,
   ServerWsEvent,
 } from '@control-room/shared-types';
 
@@ -13,7 +12,6 @@ interface RoomState {
   sessions: AgentSession[];
   messages: ChatMessage[];
   pinnedBrief: PinnedBriefItem[];
-  pendingApprovals: Approval[];
 
   // Actions
   setSnapshot: (data: {
@@ -21,15 +19,12 @@ interface RoomState {
     sessions: AgentSession[];
     recentMessages: ChatMessage[];
     pinnedBrief: PinnedBriefItem[];
-    pendingApprovals: Approval[];
   }) => void;
   updateRoom: (room: Partial<Room> & { id: string }) => void;
   addMessage: (msg: ChatMessage) => void;
   updateMessage: (msg: ChatMessage) => void;
   updateSession: (session: Partial<AgentSession> & { id: string }) => void;
   removeSession: (sessionId: string) => void;
-  addApproval: (approval: Approval) => void;
-  resolveApproval: (id: string) => void;
   handleWsEvent: (event: ServerWsEvent) => void;
 }
 
@@ -38,7 +33,6 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   sessions: [],
   messages: [],
   pinnedBrief: [],
-  pendingApprovals: [],
 
   setSnapshot: (data) =>
     set({
@@ -46,7 +40,6 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       sessions: data.sessions,
       messages: data.recentMessages,
       pinnedBrief: data.pinnedBrief,
-      pendingApprovals: data.pendingApprovals,
     }),
 
   updateRoom: (partial) =>
@@ -77,20 +70,6 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     set((state) => ({
       sessions: state.sessions.filter((s) => s.id !== sessionId),
       messages: state.messages.filter((msg) => msg.sessionId !== sessionId),
-      pendingApprovals: state.pendingApprovals.filter((approval) => approval.sessionId !== sessionId),
-    })),
-
-  addApproval: (approval) =>
-    set((state) => ({
-      pendingApprovals: [
-        ...state.pendingApprovals.filter((existing) => existing.id !== approval.id),
-        approval,
-      ],
-    })),
-
-  resolveApproval: (id) =>
-    set((state) => ({
-      pendingApprovals: state.pendingApprovals.filter((a) => a.id !== id),
     })),
 
   handleWsEvent: (event) => {
@@ -104,10 +83,6 @@ export const useRoomStore = create<RoomState>((set, get) => ({
         break;
       case 'message.updated':
         state.updateMessage(event.data);
-        break;
-      case 'run.status':
-        // run.status is for tracking run state — do NOT write it into session status
-        // Session status is handled by session.status events
         break;
       case 'session.status':
         state.updateSession({ id: event.data.sessionId, status: event.data.status });
@@ -128,12 +103,6 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       }
       case 'session.deleted':
         state.removeSession(event.data.sessionId);
-        break;
-      case 'approval.requested':
-        state.addApproval(event.data);
-        break;
-      case 'approval.resolved':
-        state.resolveApproval(event.data.id);
         break;
       case 'pin.updated':
         set({ pinnedBrief: event.data.items });

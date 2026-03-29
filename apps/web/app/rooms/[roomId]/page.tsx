@@ -5,7 +5,6 @@ import { useParams } from 'next/navigation';
 import { api } from '@/lib/api-client';
 import { useRoomStore } from '@/stores/room-store';
 import { useUIStore } from '@/stores/ui-store';
-import { useConsoleStore } from '@/stores/console-store';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { SessionTree } from '@/components/sidebar/session-tree';
 import { CenterPanel } from '@/components/console/center-panel';
@@ -22,7 +21,6 @@ export default function RoomPage() {
   const setSnapshot = useRoomStore((s) => s.setSnapshot);
   const selectedSessionId = useUIStore((s) => s.selectedSessionId);
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
-  const setConsoleSession = useConsoleStore((s) => s.setCurrentSessionId);
 
   // Connect WebSocket after initial HTTP snapshot is loaded to avoid HTTP/WS snapshot races.
   useWebSocket(roomId, !loading);
@@ -38,9 +36,8 @@ export default function RoomPage() {
     if (!roomId) return;
 
     // Immediately clear stale data from previous room
-    setSnapshot({ room: null, sessions: [], recentMessages: [], pinnedBrief: [], pendingApprovals: [] });
+    setSnapshot({ room: null, sessions: [], recentMessages: [], pinnedBrief: [] });
     setSelectedSessionId(null);
-    setConsoleSession(null);
     setLoading(true);
 
     api.rooms
@@ -57,11 +54,10 @@ export default function RoomPage() {
         if (snapshot.sessions.length > 0) {
           const sessionToSelect = preferredSession ?? snapshot.sessions[0];
           setSelectedSessionId(sessionToSelect.id);
-          setConsoleSession(sessionToSelect.id);
         }
       })
       .finally(() => setLoading(false));
-  }, [roomId, setSnapshot, setSelectedSessionId, setConsoleSession]);
+  }, [roomId, setSnapshot, setSelectedSessionId]);
 
   if (loading) {
     return (

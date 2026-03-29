@@ -14,9 +14,6 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.81",
-    "@control-room/git-worktree": "workspace:*",
-    "@control-room/runtime-events": "workspace:*",
     "@control-room/shared-types": "workspace:*",
     "@fastify/cors": "^11.0.0",
     "@fastify/websocket": "^11.0.0",
