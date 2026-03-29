@@ -13,7 +13,7 @@ export function ChatPanel() {
   const hasSelectedMessages = selectedMessageIds.size > 0;
 
   return (
-    <div className="flex flex-col h-full bg-gray-950">
+    <div className="flex h-full min-h-0 flex-col bg-gray-950">
       {/* Header */}
       <div className="p-3 border-b border-gray-800 bg-gray-900">
         <h2 className="text-sm font-bold text-gray-200">Context</h2>
@@ -21,16 +21,16 @@ export function ChatPanel() {
       </div>
 
       {/* Pinned Brief */}
-      {room && <PinnedBriefPanel roomId={room.id} />}
+      {room && <PinnedBriefPanel key={`brief-${room.id}`} roomId={room.id} />}
 
       {/* Messages */}
       <MessageList />
 
       {/* Handoff Bar (visible when messages selected) */}
-      {room && <HandoffBar roomId={room.id} />}
+      {room && <HandoffBar key={`handoff-${room.id}`} roomId={room.id} />}
 
       {/* Input */}
-      {room && !hasSelectedMessages && <MessageInput roomId={room.id} />}
+      {room && !hasSelectedMessages && <MessageInput key={`input-${room.id}`} roomId={room.id} />}
     </div>
   );
 }

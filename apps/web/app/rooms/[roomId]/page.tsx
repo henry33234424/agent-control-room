@@ -10,6 +10,7 @@ import { SessionTree } from '@/components/sidebar/session-tree';
 import { CenterPanel } from '@/components/console/center-panel';
 import { ChatPanel } from '@/components/chat/chat-panel';
 import { ResizablePanels } from '@/components/layout/resizable-panels';
+import { useSelectionStore } from '@/stores/selection-store';
 
 function storageKey(roomId: string): string {
   return `control-room:last-session:${roomId}`;
@@ -21,6 +22,7 @@ export default function RoomPage() {
   const setSnapshot = useRoomStore((s) => s.setSnapshot);
   const selectedSessionId = useUIStore((s) => s.selectedSessionId);
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
+  const clearSelection = useSelectionStore((s) => s.clear);
 
   // Connect WebSocket after initial HTTP snapshot is loaded to avoid HTTP/WS snapshot races.
   useWebSocket(roomId, !loading);
@@ -38,6 +40,7 @@ export default function RoomPage() {
     // Immediately clear stale data from previous room
     setSnapshot({ room: null, sessions: [], recentMessages: [], pinnedBrief: [] });
     setSelectedSessionId(null);
+    clearSelection();
     setLoading(true);
 
     api.rooms
@@ -57,7 +60,7 @@ export default function RoomPage() {
         }
       })
       .finally(() => setLoading(false));
-  }, [roomId, setSnapshot, setSelectedSessionId]);
+  }, [clearSelection, roomId, setSnapshot, setSelectedSessionId]);
 
   if (loading) {
     return (

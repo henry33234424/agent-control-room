@@ -81,6 +81,10 @@ export function HandoffBar({ roomId }: { roomId: string }) {
     }));
   }, [selectedSessionId, sessionsByAgent]);
 
+  useEffect(() => {
+    setInstruction('');
+  }, [roomId]);
+
   if (selectedIds.size === 0) return null;
 
   const handleSend = async (agent: AgentKind) => {
@@ -124,10 +128,15 @@ export function HandoffBar({ roomId }: { roomId: string }) {
       </div>
 
       <textarea
+        name={`handoff-input-${roomId}`}
         value={instruction}
         onChange={(e) => setInstruction(e.target.value)}
         rows={2}
         placeholder="Additional instruction for the selected context..."
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck={false}
         className="mt-3 w-full resize-none rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500"
       />
 

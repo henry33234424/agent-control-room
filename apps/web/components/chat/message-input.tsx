@@ -216,6 +216,12 @@ export function MessageInput({ roomId }: { roomId: string }) {
     }
   }, [activeSuggestionIndex, suggestions.length]);
 
+  useEffect(() => {
+    setContent('');
+    setCursorPos(0);
+    setActiveSuggestionIndex(0);
+  }, [roomId]);
+
   const applySuggestion = (suggestion: MentionSuggestion) => {
     const textarea = textareaRef.current;
     if (!textarea || !mentionContext) return;
@@ -291,10 +297,11 @@ export function MessageInput({ roomId }: { roomId: string }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="p-3 border-t border-gray-800 bg-gray-900">
+    <form onSubmit={handleSubmit} autoComplete="off" className="p-3 border-t border-gray-800 bg-gray-900">
       <div className="relative flex gap-2">
         <textarea
           ref={textareaRef}
+          name={`message-input-${roomId}`}
           value={content}
           onChange={(e) => {
             setContent(e.target.value);
@@ -305,6 +312,10 @@ export function MessageInput({ roomId }: { roomId: string }) {
           onKeyUp={(e) => setCursorPos(e.currentTarget.selectionStart ?? content.length)}
           placeholder="Type @ to route to Claude, Codex, both, or a named session..."
           rows={2}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
           className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 resize-none focus:outline-none focus:border-blue-500 transition-colors"
           disabled={sending}
         />
