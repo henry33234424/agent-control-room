@@ -61,7 +61,7 @@ export function ResizablePanels({
   );
 
   return (
-    <div ref={containerRef} className="flex h-screen min-h-0">
+    <div ref={containerRef} className="flex h-screen min-h-0 w-screen overflow-hidden">
       {/* Left panel */}
       <div style={{ width: leftWidth, flexShrink: 0 }} className="min-h-0 overflow-hidden">
         {left}

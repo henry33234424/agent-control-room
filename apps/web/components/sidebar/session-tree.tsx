@@ -274,11 +274,11 @@ export function SessionTree() {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="p-3 border-b border-gray-700">
         <h2 className="text-sm font-bold text-gray-200 uppercase tracking-wider">Projects</h2>
       </div>
-      <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+      <div className="min-h-0 flex-1 overflow-y-auto p-2 space-y-1.5">
         {rooms.map((project) => {
           const isCurrent = project.id === currentRoomId;
           const isExpanded = expandedRooms.has(project.id);

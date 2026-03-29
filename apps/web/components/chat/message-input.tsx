@@ -297,7 +297,7 @@ export function MessageInput({ roomId }: { roomId: string }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} autoComplete="off" className="p-3 border-t border-gray-800 bg-gray-900">
+    <form onSubmit={handleSubmit} autoComplete="off" className="shrink-0 border-t border-gray-800 bg-gray-900 p-3">
       <div className="relative flex gap-2">
         <textarea
           ref={textareaRef}

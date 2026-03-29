@@ -114,7 +114,7 @@ export function HandoffBar({ roomId }: { roomId: string }) {
   };
 
   return (
-    <div className="border-t border-blue-800 bg-blue-900/20 p-3">
+    <div className="shrink-0 border-t border-blue-800 bg-blue-900/20 p-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-blue-300">
           {selectedIds.size} message{selectedIds.size > 1 ? 's' : ''} selected

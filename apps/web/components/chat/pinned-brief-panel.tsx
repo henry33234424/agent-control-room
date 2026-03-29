@@ -74,7 +74,7 @@ export function PinnedBriefPanel({ roomId }: { roomId: string }) {
   };
 
   return (
-    <div className="border-b border-gray-800">
+    <div className="shrink-0 border-b border-gray-800">
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-gray-400 uppercase hover:bg-gray-800 transition-colors"

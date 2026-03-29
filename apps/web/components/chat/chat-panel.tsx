@@ -15,7 +15,7 @@ export function ChatPanel() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-gray-950">
       {/* Header */}
-      <div className="p-3 border-b border-gray-800 bg-gray-900">
+      <div className="shrink-0 border-b border-gray-800 bg-gray-900 p-3">
         <h2 className="text-sm font-bold text-gray-200">Context</h2>
         {room && <p className="text-xs text-gray-500 mt-0.5">{room.name}</p>}
       </div>
