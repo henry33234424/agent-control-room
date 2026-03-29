@@ -96,11 +96,6 @@ export function TerminalPanel() {
       },
       scrollback: 10000,
       convertEol: true,
-      // Match native terminal behavior:
-      // When TUI uses alternate screen (full-screen mode), wheel sends
-      // arrow keys to the program (like iTerm2/Terminal.app).
-      // In normal mode, wheel scrolls the buffer.
-      alternateScroll: true,
     });
 
     const fitAddon = new FitAddon();
@@ -460,7 +455,7 @@ export function TerminalPanel() {
   };
 
   return (
-    <div className="relative h-full min-h-0 bg-[#0a0e14]">
+    <div className="relative h-full bg-[#0a0e14]">
       <div ref={wrapperRef} className="absolute inset-0" />
 
       {!room && (
