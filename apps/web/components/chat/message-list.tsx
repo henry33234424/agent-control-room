@@ -31,7 +31,7 @@ export function MessageList() {
   }, [messages]);
 
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2">
+    <div ref={scrollRef} className="flex-1 p-3 space-y-2">
       {messages.length === 0 ? (
         <div className="text-gray-600 text-center mt-8 text-sm">
           No context items yet. Send prompts with @Claude/@Codex, or capture text from the terminal.
