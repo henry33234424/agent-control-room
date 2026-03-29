@@ -220,6 +220,17 @@ export function MessageInput({ roomId }: { roomId: string }) {
     setContent('');
     setCursorPos(0);
     setActiveSuggestionIndex(0);
+
+    const resetTextarea = () => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.value = '';
+      textarea.setSelectionRange(0, 0);
+      textarea.scrollTop = 0;
+    };
+
+    resetTextarea();
+    window.requestAnimationFrame(resetTextarea);
   }, [roomId]);
 
   const applySuggestion = (suggestion: MentionSuggestion) => {
@@ -301,7 +312,6 @@ export function MessageInput({ roomId }: { roomId: string }) {
       <div className="relative flex gap-2">
         <textarea
           ref={textareaRef}
-          name={`message-input-${roomId}`}
           value={content}
           onChange={(e) => {
             setContent(e.target.value);
@@ -313,6 +323,8 @@ export function MessageInput({ roomId }: { roomId: string }) {
           placeholder="Type @ to route to Claude, Codex, both, or a named session..."
           rows={2}
           autoComplete="off"
+          data-form-type="other"
+          autoSave="off"
           autoCorrect="off"
           autoCapitalize="off"
           spellCheck={false}

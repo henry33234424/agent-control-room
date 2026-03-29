@@ -63,7 +63,10 @@ export function ResizablePanels({
   return (
     <div ref={containerRef} className="flex h-screen min-h-0 w-screen overflow-hidden">
       {/* Left panel */}
-      <div style={{ width: leftWidth, flexShrink: 0 }} className="min-h-0 overflow-hidden">
+      <div
+        style={{ width: leftWidth, flexShrink: 0 }}
+        className="flex h-full min-h-0 flex-col overflow-hidden"
+      >
         {left}
       </div>
 
@@ -74,7 +77,7 @@ export function ResizablePanels({
       />
 
       {/* Center panel */}
-      <div className="min-h-0 flex-1 min-w-0 overflow-hidden">
+      <div className="flex h-full min-h-0 flex-1 min-w-0 flex-col overflow-hidden">
         {center}
       </div>
 
@@ -85,7 +88,10 @@ export function ResizablePanels({
       />
 
       {/* Right panel */}
-      <div style={{ width: rightWidth, flexShrink: 0 }} className="min-h-0 overflow-hidden">
+      <div
+        style={{ width: rightWidth, flexShrink: 0 }}
+        className="flex h-full min-h-0 flex-col overflow-hidden"
+      >
         {right}
       </div>
     </div>

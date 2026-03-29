@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSelectionStore } from '@/stores/selection-store';
 import { api } from '@/lib/api-client';
 import { useUIStore } from '@/stores/ui-store';
@@ -58,6 +58,7 @@ export function HandoffBar({ roomId }: { roomId: string }) {
   const selectedSessionId = useUIStore((s) => s.selectedSessionId);
   const setSelectedSessionId = useUIStore((s) => s.setSelectedSessionId);
   const [instruction, setInstruction] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [sending, setSending] = useState<AgentState<boolean>>({
     claude: false,
     codex: false,
@@ -83,6 +84,16 @@ export function HandoffBar({ roomId }: { roomId: string }) {
 
   useEffect(() => {
     setInstruction('');
+    const resetTextarea = () => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.value = '';
+      textarea.setSelectionRange(0, 0);
+      textarea.scrollTop = 0;
+    };
+
+    resetTextarea();
+    window.requestAnimationFrame(resetTextarea);
   }, [roomId]);
 
   if (selectedIds.size === 0) return null;
@@ -128,12 +139,14 @@ export function HandoffBar({ roomId }: { roomId: string }) {
       </div>
 
       <textarea
-        name={`handoff-input-${roomId}`}
+        ref={textareaRef}
         value={instruction}
         onChange={(e) => setInstruction(e.target.value)}
         rows={2}
         placeholder="Additional instruction for the selected context..."
         autoComplete="off"
+        data-form-type="other"
+        autoSave="off"
         autoCorrect="off"
         autoCapitalize="off"
         spellCheck={false}
