@@ -114,6 +114,7 @@ export function HandoffBar({ roomId }: { roomId: string }) {
         sessionId: selectedSession?.id,
         selectedMessageIds: Array.from(selectedIds),
       });
+      setInstruction('');
       if (msg.sessionId) {
         setSelectedSessionId(msg.sessionId);
       }

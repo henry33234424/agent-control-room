@@ -1,6 +1,8 @@
 {
   "name": "@control-room/web",
   "version": "0.1.0",
+  "description": "Next.js frontend with xterm.js terminal",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "dev": "next dev --port 3005",

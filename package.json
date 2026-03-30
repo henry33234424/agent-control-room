@@ -1,5 +1,8 @@
 {
   "name": "control-room",
+  "version": "0.1.0",
+  "description": "Local-first web console for orchestrating multiple AI coding agents",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "dev": "pnpm -r --parallel dev",

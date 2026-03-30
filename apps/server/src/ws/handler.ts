@@ -40,6 +40,12 @@ export async function registerWebSocket(app: FastifyInstance) {
           return;
         }
 
+        // Fast path — pty.input is the most frequent message
+        if (msg.type === 'pty.input') {
+          ptyManager.writeForSocket(ws, msg.sessionId, msg.data);
+          return;
+        }
+
         // Handle PTY messages (not part of ClientWsEvent type)
         if (msg.type === 'pty.start') {
           const { sessionId, roomId, agent, cols, rows } = msg;
@@ -144,11 +150,6 @@ export async function registerWebSocket(app: FastifyInstance) {
             const error = err instanceof Error ? err.message : 'Failed to attach terminal session';
             ws.send(JSON.stringify({ type: 'pty.exit', sessionId: msg.sessionId, exitCode: 1, error }));
           }
-          return;
-        }
-
-        if (msg.type === 'pty.input') {
-          await ptyManager.writeForSocket(ws, msg.sessionId, msg.data);
           return;
         }
 

@@ -6,17 +6,10 @@ class TmuxSessionManager {
   private available: boolean | null = null;
 
   isAvailable(): boolean {
-    if (this.available !== null) {
-      return this.available;
-    }
-
-    try {
-      execFileSync('tmux', ['-V'], { stdio: 'ignore' });
-      this.available = true;
-    } catch {
-      this.available = false;
-    }
-    return this.available;
+    // tmux disabled — mouse wheel scrolling doesn't work through the tmux PTY chain.
+    // All attempts (mouse on/off, WheelUpPane bindings, terminal-overrides) failed.
+    // Without tmux, xterm.js scrollback works natively.
+    return false;
   }
 
   ensureSession(input: {

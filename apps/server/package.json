@@ -1,6 +1,8 @@
 {
   "name": "@control-room/server",
   "version": "0.1.0",
+  "description": "Fastify backend with WebSocket and PTY management",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "scripts": {

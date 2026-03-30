@@ -102,6 +102,14 @@ export function TerminalPanel() {
     term.loadAddon(fitAddon);
     term.open(container);
 
+    // Suppress raw key events during IME composition to prevent double input
+    term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) {
+        return false;
+      }
+      return true;
+    });
+
     term.onData((data: string) => {
       wsClient.send({ type: 'pty.input', sessionId, data });
     });

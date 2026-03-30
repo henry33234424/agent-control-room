@@ -1,6 +1,8 @@
 {
   "name": "@control-room/shared-types",
   "version": "0.1.0",
+  "description": "Shared TypeScript types for Control Room",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "main": "dist/index.js",

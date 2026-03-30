@@ -23,6 +23,8 @@ interface PtySession {
   restoring: boolean;
   watcher: SessionWatcher;
   snapshotTimer: ReturnType<typeof setTimeout> | null;
+  screenWriteTimer: ReturnType<typeof setTimeout> | null;
+  pendingScreenData: string;
   backend: 'direct' | 'tmux';
 }
 
@@ -108,6 +110,8 @@ class PtyManager {
         },
       }),
       snapshotTimer: null,
+      screenWriteTimer: null,
+      pendingScreenData: '',
       backend: usingTmux ? 'tmux' : 'direct',
     };
 
@@ -142,8 +146,19 @@ class PtyManager {
     // PTY output → WebSocket (for terminal display)
     ptyProcess.onData((data: string) => {
       session.buffer = this.appendBuffer(session.buffer, data);
-      void session.screen.write(data);
-      this.scheduleSnapshotPersist(session);
+
+      // Batch headless terminal writes (50ms) to reduce CPU — client gets data immediately
+      session.pendingScreenData += data;
+      if (!session.screenWriteTimer) {
+        session.screenWriteTimer = setTimeout(() => {
+          session.screenWriteTimer = null;
+          const pending = session.pendingScreenData;
+          session.pendingScreenData = '';
+          void session.screen.write(pending);
+          this.scheduleSnapshotPersist(session);
+        }, 50);
+      }
+
       if (session.ws?.readyState === 1) {
         if (session.restoring) {
           session.restoreBacklog = this.appendBuffer(session.restoreBacklog, data);
@@ -154,6 +169,14 @@ class PtyManager {
     });
 
     ptyProcess.onExit(({ exitCode }) => {
+      if (session.screenWriteTimer) {
+        clearTimeout(session.screenWriteTimer);
+        session.screenWriteTimer = null;
+      }
+      if (session.pendingScreenData) {
+        void session.screen.write(session.pendingScreenData);
+        session.pendingScreenData = '';
+      }
       if (session.snapshotTimer) {
         clearTimeout(session.snapshotTimer);
         session.snapshotTimer = null;
@@ -388,6 +411,16 @@ class PtyManager {
     session.restoreSequence = restoreSequence;
     session.restoring = true;
     session.restoreBacklog = '';
+
+    // Flush any pending screen data before snapshotting
+    if (session.pendingScreenData) {
+      if (session.screenWriteTimer) {
+        clearTimeout(session.screenWriteTimer);
+        session.screenWriteTimer = null;
+      }
+      await session.screen.write(session.pendingScreenData);
+      session.pendingScreenData = '';
+    }
 
     const snapshot = await session.screen.snapshot();
     if (session.ws !== ws || restoreSequence !== session.restoreSequence) {
