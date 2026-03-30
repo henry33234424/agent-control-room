@@ -1,14 +1,14 @@
-# Control Room
+# Agent Control Room
 
 A local-first web console for orchestrating multiple AI coding agents (Claude, Codex) from a single interface.
 
-![Control Room Screenshot](docs/screenshot.png)
+![Agent Control Room Screenshot](docs/screenshot.png)
 
 > **Security Notice:** This application has **no authentication**. The backend listens on all interfaces by default and all API/WebSocket endpoints are unauthenticated. **Do not expose the server port to a network you don't trust.** It is designed to run on your local machine only. If you must run it on a remote server, put it behind a VPN or SSH tunnel.
 
 ## What it does
 
-Control Room lets you run Claude CLI and Codex CLI side by side in your browser, with real interactive terminals — not a watered-down wrapper. You get:
+Agent Control Room lets you run Claude CLI and Codex CLI side by side in your browser, with real interactive terminals — not a watered-down wrapper. You get:
 
 - **Multiple sessions** — Run several Claude and Codex sessions per project, each with its own terminal
 - **Real terminals** — Full interactive CLI experience with xterm.js (scrollback, mouse, slash commands all work)

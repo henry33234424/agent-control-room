@@ -57,7 +57,7 @@ async function main() {
 
   // Start
   await app.listen({ port: config.port, host: config.host });
-  app.log.info(`Control Room server running on http://${config.host}:${config.port}`);
+  app.log.info(`Agent Control Room server running on http://${config.host}:${config.port}`);
 }
 
 main().catch((err) => {

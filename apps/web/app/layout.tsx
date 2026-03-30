@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Control Room',
+  title: 'Agent Control Room',
   description: 'Multi-Agent Collaboration Console',
 };
 
