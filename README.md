@@ -4,7 +4,7 @@ A local-first web console for orchestrating multiple AI coding agents (Claude, C
 
 ![Agent Control Room Screenshot](docs/screenshot.png)
 
-> **Security Notice:** This application has **no authentication**. The backend listens on all interfaces by default and all API/WebSocket endpoints are unauthenticated. **Do not expose the server port to a network you don't trust.** It is designed to run on your local machine only. If you must run it on a remote server, put it behind a VPN or SSH tunnel.
+> ⚠️ **Security Notice:** This application has **no authentication**. The backend listens on all interfaces by default and all API/WebSocket endpoints are unauthenticated. **Do not expose the server port to a network you don't trust.** It is designed to run on your local machine only. If you must run it on a remote server, put it behind a VPN or SSH tunnel.
 
 ## What it does
 
