@@ -2,6 +2,10 @@
 
 A local-first web console for orchestrating multiple AI coding agents (Claude, Codex) from a single interface.
 
+![Control Room Screenshot](docs/screenshot.png)
+
+> **Security Notice:** This application has **no authentication**. The backend listens on all interfaces by default and all API/WebSocket endpoints are unauthenticated. **Do not expose the server port to a network you don't trust.** It is designed to run on your local machine only. If you must run it on a remote server, put it behind a VPN or SSH tunnel.
+
 ## What it does
 
 Control Room lets you run Claude CLI and Codex CLI side by side in your browser, with real interactive terminals — not a watered-down wrapper. You get:
@@ -9,7 +13,7 @@ Control Room lets you run Claude CLI and Codex CLI side by side in your browser,
 - **Multiple sessions** — Run several Claude and Codex sessions per project, each with its own terminal
 - **Real terminals** — Full interactive CLI experience with xterm.js (scrollback, mouse, slash commands all work)
 - **Cross-agent messaging** — Select chat messages and forward context to another agent or session
-- **Persistent terminals** — Close your browser tab, come back later, your sessions are still alive
+- **Persistent terminals** — Close your browser tab, come back later, your sessions are still alive (while the server is running)
 - **Local-first** — Everything runs on your machine. No cloud, no accounts, SQLite for storage
 
 ## Architecture
@@ -58,8 +62,8 @@ data/
 
 ```bash
 # Clone and install
-git clone https://github.com/anthropics/control-room.git
-cd control-room
+git clone https://github.com/henry33234424/agent-control-room.git
+cd agent-control-room
 pnpm install
 
 # Set up the database
@@ -87,15 +91,14 @@ Open **http://localhost:3005** in your browser.
 |----------|---------|-------------|
 | `PORT` | `3002` | Backend server port |
 | `DATABASE_URL` | `file:../data/room.db` | SQLite database path |
-| `CORS_ORIGIN` | `http://localhost:3005` | Frontend URL for CORS |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:3002` | Backend API URL (frontend) |
 | `NEXT_PUBLIC_WS_URL` | `ws://localhost:3002/ws` | WebSocket URL (frontend) |
 
 ## Known Limitations
 
 - Multiple agents working in the same directory can create file conflicts — coordinate via the handoff system
-- This is a single-user local application. CORS is permissive by default (`origin: true`)
-- Terminal session recovery after server restart depends on tmux availability
+- **No authentication** — see Security Notice above
+- Terminal sessions survive browser refresh but not server restart
 
 ## License
 

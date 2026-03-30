@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../db.js';
 import type { CreateRoomRequest, UpdateRoomRequest } from '@control-room/shared-types';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { toRoomDto, toSessionDto, toMessageDto, toPinDto } from '../lib/dto.js';
 import { ptyManager } from '../ws/pty-manager.js';
 
@@ -14,6 +14,10 @@ export async function roomRoutes(app: FastifyInstance) {
 
     if (!existsSync(repoPath)) {
       return reply.status(400).send({ error: `Path does not exist: ${repoPath}` });
+    }
+
+    if (!statSync(repoPath).isDirectory()) {
+      return reply.status(400).send({ error: `Path is not a directory: ${repoPath}` });
     }
 
     const room = await prisma.room.create({
