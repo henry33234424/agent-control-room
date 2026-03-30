@@ -31,11 +31,12 @@ class TmuxSessionManager {
       return 'unavailable';
     }
 
+    const name = this.sessionName(input.sessionId);
+
     if (this.hasSession(input.sessionId)) {
+      this.configureSession(name);
       return 'existing';
     }
-
-    const name = this.sessionName(input.sessionId);
 
     execFileSync('tmux', [
       'new-session',
@@ -52,14 +53,45 @@ class TmuxSessionManager {
       ...input.args,
     ], { stdio: 'ignore' });
 
-    // Enable mouse mode so scrolling works through xterm.js
+    this.configureSession(name);
+    return 'created';
+  }
+
+  private configureSession(name: string): void {
+    // Enable mouse support, but keep tmux history scrolling available when the
+    // pane program is not actively requesting mouse events.
     try {
       execFileSync('tmux', ['set-option', '-t', name, 'mouse', 'on'], { stdio: 'ignore' });
+      execFileSync('tmux', ['set-option', '-t', name, 'status', 'off'], { stdio: 'ignore' });
+
+      // Standard passthrough pattern:
+      // - if the pane app has enabled mouse tracking, forward the wheel event
+      // - otherwise, WheelUp enters tmux copy-mode with auto-exit at bottom
+      execFileSync('tmux', [
+        'bind-key',
+        '-T',
+        'root',
+        'WheelUpPane',
+        'if-shell',
+        '-Ft=',
+        '#{mouse_any_flag}',
+        'select-pane -t= \\; send-keys -M',
+        'copy-mode -et=',
+      ], { stdio: 'ignore' });
+      execFileSync('tmux', [
+        'bind-key',
+        '-T',
+        'root',
+        'WheelDownPane',
+        'select-pane',
+        '-t=',
+        '\\;',
+        'send-keys',
+        '-M',
+      ], { stdio: 'ignore' });
     } catch {
       // Best-effort
     }
-
-    return 'created';
   }
 
   hasSession(sessionId: string): boolean {
