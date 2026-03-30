@@ -35,11 +35,13 @@ class TmuxSessionManager {
       return 'existing';
     }
 
+    const name = this.sessionName(input.sessionId);
+
     execFileSync('tmux', [
       'new-session',
       '-d',
       '-s',
-      this.sessionName(input.sessionId),
+      name,
       '-x',
       String(input.cols),
       '-y',
@@ -49,6 +51,13 @@ class TmuxSessionManager {
       input.command,
       ...input.args,
     ], { stdio: 'ignore' });
+
+    // Enable mouse mode so scrolling works through xterm.js
+    try {
+      execFileSync('tmux', ['set-option', '-t', name, 'mouse', 'on'], { stdio: 'ignore' });
+    } catch {
+      // Best-effort
+    }
 
     return 'created';
   }
