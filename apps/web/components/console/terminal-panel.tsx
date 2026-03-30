@@ -284,6 +284,7 @@ export function TerminalPanel() {
 
     inst.container.style.display = 'block';
     activeSessionRef.current = selectedSessionId;
+    inst.term.focus();
     attachTerminalSession(selectedSessionId);
   }, [attachTerminalSession, getOrCreateTerm, loaded, room, selectedSessionId, sessions]);
 
